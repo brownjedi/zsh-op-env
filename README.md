@@ -160,6 +160,18 @@ batch, and the error message can name the one that actually broke. If
 dismissed), the remaining references are skipped instead of prompting once
 each.
 
+### Commands on the same line as `cd`
+
+The hook runs once, before the whole command line. In `cd proj && make`,
+direnv loads `proj/.envrc` during the `cd`, after the hook has already run, so
+`make` sees the raw `op://` references. The next command line sees the
+resolved values. To use them on the same line, resolve explicitly after the
+`cd`:
+
+```zsh
+cd proj && op-env-resolve && make
+```
+
 ### Failure behaviour
 
 A reference that can't be resolved keeps its `op://` value rather than becoming
