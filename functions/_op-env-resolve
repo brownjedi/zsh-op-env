@@ -44,6 +44,7 @@ for _oe_name in ${(ko)_oe_refof}; do
         _oe_todo+=($_oe_name)
     elif [[ -z ${OP_ENV_NO_CACHE:-} ]] && (( $+_OP_ENV_CACHE[$_oe_ref] )); then
         typeset -gx "$_oe_name=$_OP_ENV_CACHE[$_oe_ref]"
+        _OP_ENV_RESOLVED+=($_oe_name)
     else
         _oe_todo+=($_oe_name)
         _oe_refs+=($_oe_ref)
@@ -137,6 +138,7 @@ for _oe_name in $_oe_todo; do
     _oe_ref=$_oe_refof[$_oe_name]
     if (( $+_oe_got[$_oe_ref] )); then
         typeset -gx "$_oe_name=$_oe_got[$_oe_ref]"
+        _OP_ENV_RESOLVED+=($_oe_name)
         [[ -n ${OP_ENV_NO_CACHE:-} ]] || _OP_ENV_CACHE[$_oe_ref]=$_oe_got[$_oe_ref]
         unset "_OP_ENV_WARNED[$_oe_ref]"
     else

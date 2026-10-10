@@ -214,7 +214,7 @@ test_failure_is_reported_once() {
 }
 
 test_if_changed_skips_refs_that_already_failed() {
-    export A=op://Dev/missing/x
+    export OP_ENV_HOOK=always A=op://Dev/missing/x
     run _op-env-preexec
     assert_status 0
     assert_calls 'inject op://Dev/missing/x' 'read op://Dev/missing/x'
@@ -353,15 +353,88 @@ test_hook_only_in_interactive_shells() {
     local src="source ${(qq)ROOT}/op-env.plugin.zsh; source ${(qq)ROOT}/op-env.plugin.zsh"
     assert_eq _op-env-preexec "$(print -r -- "$src; print -r -- \$preexec_functions" | interactive_zsh)" \
         'preexec hooks when interactive'
-    assert_eq '' "$(print -r -- "OP_ENV_DISABLE_HOOK=1 $src; print -r -- \$preexec_functions" | interactive_zsh)" \
-        'preexec hooks with OP_ENV_DISABLE_HOOK'
+    assert_eq '' "$(print -r -- "OP_ENV_HOOK=off $src; print -r -- \$preexec_functions" | interactive_zsh)" \
+        'preexec hooks with OP_ENV_HOOK=off'
+}
+
+test_unknown_hook_mode_warns_and_falls_back_to_direnv() {
+    local out=$(print -r -- "OP_ENV_HOOK=bogus source ${(qq)ROOT}/op-env.plugin.zsh; print -r -- \$preexec_functions" |
+        PS1= zsh -fi +Z +o prompt_cr +o prompt_sp 2>&1)
+    assert_contains $out 'op-env: unknown OP_ENV_HOOK=bogus (expected direnv, always or off), using direnv'
+    assert_contains $out _op-env-preexec
+}
+
+test_direnv_hook_first_command_resolves_without_direnv() {
+    secret op://Dev/a/x one
+    export A=op://Dev/a/x
+    run _op-env-preexec
+    assert_eq one $A
+}
+
+test_direnv_hook_skips_until_direnv_diff_changes() {
+    secret op://Dev/a/x one
+    secret op://Dev/b/x two
+    export DIRENV_DIFF=d1
+    run _op-env-preexec
+    clear_calls
+    export B=op://Dev/b/x
+    run _op-env-preexec
+    assert_eq op://Dev/b/x $B
+    assert_calls
+    export DIRENV_DIFF=d2
+    run _op-env-preexec
+    assert_eq two $B
+    assert_calls 'inject op://Dev/b/x'
+}
+
+test_direnv_hook_resolves_after_leave_and_reenter() {
+    secret op://Dev/a/x one
+    export DIRENV_DIFF=d1 A=op://Dev/a/x
+    run _op-env-preexec
+    unset DIRENV_DIFF A
+    run _op-env-preexec
+    clear_calls
+    clear_secrets
+    export DIRENV_DIFF=d1 A=op://Dev/a/x
+    run _op-env-preexec
+    assert_eq one $A
+    assert_calls
+}
+
+test_direnv_hook_catches_reload_within_one_command() {
+    secret op://Dev/a/x one
+    export DIRENV_DIFF=d1 A=op://Dev/a/x
+    run _op-env-preexec
+    clear_calls
+    clear_secrets
+    # cd .. && cd -: direnv unloads and reloads inside the command, leaving the same diff.
+    export A=op://Dev/a/x
+    run _op-env-preexec
+    assert_eq one $A
+    assert_calls
+}
+
+test_always_hook_resolves_before_every_command() {
+    export OP_ENV_HOOK=always DIRENV_DIFF=d1
+    run _op-env-preexec
+    secret op://Dev/a/x one
+    export A=op://Dev/a/x
+    run _op-env-preexec
+    assert_eq one $A
+}
+
+test_off_hook_does_nothing_if_called() {
+    export OP_ENV_HOOK=off A=op://Dev/a/x
+    run _op-env-preexec
+    assert_eq op://Dev/a/x $A
+    assert_calls
 }
 
 test_hook_resolves_refs_exported_by_precmd() {
     secret op://Dev/a/x one
     # Stands in for direnv, which exports from a precmd hook.
     local script="source ${(qq)ROOT}/op-env.plugin.zsh
-precmd() { export A=op://Dev/a/x }
+precmd() { export A=op://Dev/a/x DIRENV_DIFF=d1 }
 print -r -- \"A=\$A\""
     assert_eq A=one "$(print -r -- $script | interactive_zsh)" 'output of interactive shell'
 }

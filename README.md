@@ -17,7 +17,8 @@ export STRIPE_KEY=op://Dev/stripe/test-key
 - zsh 5.3+
 - [1Password CLI](https://developer.1password.com/docs/cli) (`op`), signed in
 - [direnv](https://direnv.net), optional. Without it the plugin still resolves
-  references exported from `.zshenv`, a profile, or by hand.
+  references exported from `.zshenv` or a profile. To also resolve ones you
+  export by hand later, set `OP_ENV_HOOK=always` or run `op-env-resolve`.
 
 ## Install
 
@@ -89,18 +90,28 @@ plugins=(... direnv op-env)
 | Variable                    | Effect                                                                                                                                                                                                                             |
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `OP_ENV_DEBUG=1`            | Trace every pass, including the hook-driven ones.                                                                                                                                                                                  |
-| `OP_ENV_DISABLE_HOOK=1`     | Don't install the preexec hook; call `op-env-resolve` yourself. Set it _before_ loading.                                                                                                                                           |
+| `OP_ENV_HOOK=direnv`        | Default. Resolve before the first command, then only when direnv loads, reloads or unloads an `.envrc` (`$DIRENV_DIFF` changes).                                                                                                   |
+| `OP_ENV_HOOK=always`        | Scan before every command, so references exported any other way (by hand, by another plugin) are resolved too.                                                                                                                     |
+| `OP_ENV_HOOK=off`           | Don't install the preexec hook; call `op-env-resolve` yourself. Set it _before_ loading.                                                                                                                                           |
 | `OP_ENV_NO_CACHE=1`         | Ask `op` every pass instead of caching values in memory.                                                                                                                                                                           |
 | `OP_ENV_VAULTS=Dev,Staging` | Only resolve references into these vaults. Others are refused with a warning and never sent to `op`. Comma-separated, matched exactly against the vault part of the reference (name or ID, case-sensitive). Unset means any vault. |
 
 ## How it works
 
-Before each command (a `preexec` hook), the plugin scans `$parameters` for
+Before a command runs (a `preexec` hook), the plugin scans `$parameters` for
 exported scalars whose value is a bare `op://` reference. Running at `preexec`
 rather than `precmd` means direnv's hook has always run first, so the command
-you just typed sees the resolved values. Once a reference is resolved its
-variable no longer holds `op://`, so on a normal command the scan finds nothing
-and no `op` call is made.
+you just typed sees the resolved values.
+
+By default the scan runs before the first command and then only when
+`$DIRENV_DIFF` changes, which direnv does whenever it loads, reloads or unloads
+an `.envrc`. Resolving a variable in place does not change `$DIRENV_DIFF`, so
+on a normal command the hook does a single string comparison. One extra check
+covers `cd .. && cd -` in a single command line, where direnv unloads and
+reloads and ends with the same diff: if a variable the plugin resolved holds
+its `op://` reference again, the scan runs anyway. With `OP_ENV_HOOK=always`
+the scan runs before every command; once a reference is resolved its variable
+no longer holds `op://`, so the scan finds nothing and no `op` call is made.
 
 Everything the scan finds is resolved in a single `op inject` call. References
 already resolved in this shell come from an in-memory cache, so moving between
@@ -118,9 +129,9 @@ each.
 A reference that can't be resolved keeps its `op://` value rather than becoming
 an empty string. Visibly unresolved beats silently empty: it is the
 difference between an obvious error and a confusing one deep in an application.
-Failed references are not retried before every command, only when the set of
-unresolved references changes (for example on `cd` or a new `export`) or when
-you run `op-env-resolve`. Each is reported once, and again only if it resolves
+Failed references are not retried before every command, only when the hook
+next scans and the set of unresolved references has changed (for example on
+`cd`), or when you run `op-env-resolve`. Each is reported once, and again only if it resolves
 and later breaks.
 
 ### Values are handled verbatim
