@@ -1,0 +1,8 @@
+# _op-env-split-vaults ARRAY VALUE: set ARRAY to the comma-separated vaults in VALUE, trimmed, empty entries dropped.
+emulate -L zsh -o extended_glob
+local _oe_vault
+local -a _oe_list
+for _oe_vault in ${(s:,:)2}; do
+    _oe_list+=(${${_oe_vault##[[:space:]]#}%%[[:space:]]#})
+done
+set -A $1 $_oe_list

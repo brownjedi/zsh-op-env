@@ -32,14 +32,15 @@ if (( ! $#_oe_refof )); then
 fi
 _op-env-dbg "found ${#_oe_refof} ref(s): ${(ko)_oe_refof}"
 
-for _oe_vault in ${(s:,:)OP_ENV_VAULTS:-}; do
-    _oe_vaults+=(${${_oe_vault##[[:space:]]#}%%[[:space:]]#})
-done
+_op-env-split-vaults _oe_vaults "${OP_ENV_VAULTS:-}"
 for _oe_name in ${(ko)_oe_refof}; do
     _oe_ref=$_oe_refof[$_oe_name]
     _oe_vault=${${_oe_ref#op://}%%/*}
-    # Checked before the cache, so narrowing OP_ENV_VAULTS also stops serving cached values.
-    if (( $#_oe_vaults )) && (( ! ${_oe_vaults[(Ie)$_oe_vault]} )); then
+    # Checked before the cache, so narrowing either list also stops serving cached values.
+    if (( $#_OP_ENV_ALLOWED_VAULTS )) && (( ! ${_OP_ENV_ALLOWED_VAULTS[(Ie)$_oe_vault]} )); then
+        _oe_why[$_oe_ref]="vault \"$_oe_vault\" is not in OP_ENV_ALLOWED_VAULTS"
+        _oe_todo+=($_oe_name)
+    elif (( $#_oe_vaults )) && (( ! ${_oe_vaults[(Ie)$_oe_vault]} )); then
         _oe_why[$_oe_ref]="vault \"$_oe_vault\" is not in OP_ENV_VAULTS"
         _oe_todo+=($_oe_name)
     elif [[ -z ${OP_ENV_NO_CACHE:-} ]] && (( $+_OP_ENV_CACHE[$_oe_ref] )); then

@@ -9,7 +9,7 @@ typeset -g _OP_ENV_LOADED=1
 typeset -g OP_ENV_HOME="${0:A:h}"
 
 fpath+=("$OP_ENV_HOME/functions")
-autoload -Uz op-env-resolve op-env-flush _op-env-resolve _op-env-preexec _op-env-dbg
+autoload -Uz op-env-resolve op-env-flush _op-env-resolve _op-env-preexec _op-env-dbg _op-env-split-vaults
 
 # ref -> resolved value, for this shell only. Never written to disk.
 typeset -gA _OP_ENV_CACHE
@@ -21,6 +21,11 @@ typeset -g  _OP_ENV_LAST_SIG=''
 typeset -gaU _OP_ENV_RESOLVED
 # _OP_ENV_LAST_DIFF: $DIRENV_DIFF the hook last ran for. Left unset so the first command always gets a pass.
 typeset -g OP_ENV_DEBUG="${OP_ENV_DEBUG:-}"
+
+# Read once and readonly, so neither direnv nor a .env file it loads can widen it later. Empty means any vault.
+typeset -ga _OP_ENV_ALLOWED_VAULTS
+_op-env-split-vaults _OP_ENV_ALLOWED_VAULTS "${OP_ENV_ALLOWED_VAULTS:-}"
+typeset -gr _OP_ENV_ALLOWED_VAULTS
 
 if [[ -o interactive && ${OP_ENV_HOOK:-direnv} != off ]]; then
     [[ ${OP_ENV_HOOK:-direnv} == (direnv|always) ]] ||

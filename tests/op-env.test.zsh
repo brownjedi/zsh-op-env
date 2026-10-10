@@ -287,6 +287,71 @@ test_vault_allowlist_applies_to_cached_values() {
     assert_eq op://Dev/a/x $A
 }
 
+# OP_ENV_ALLOWED_VAULTS is read once at load, so these load the plugin again in a fresh shell.
+allowed_zsh() {
+    zsh -f -c "OP_ENV_ALLOWED_VAULTS=${(qq)1}; source ${(qq)ROOT}/op-env.plugin.zsh; $2"
+}
+
+test_allowed_vaults_cap_project_vaults() {
+    secret op://Dev/a/x dev
+    secret op://Staging/a/x staging
+    secret op://Private/bank/password hunter2
+    export OP_ENV_VAULTS=Dev,Private A=op://Dev/a/x B=op://Private/bank/password C=op://Staging/a/x
+    local out=$(allowed_zsh ' Dev , Staging ' 'op-env-resolve; print -r -- "st=$? A=$A B=$B C=$C"' 2>$T/err)
+    assert_eq 'st=1 A=dev B=op://Private/bank/password C=op://Staging/a/x' $out
+    assert_not_contains "$(<$T/calls)" Private
+    assert_contains "$(<$T/err)" 'vault "Private" is not in OP_ENV_ALLOWED_VAULTS'
+    assert_contains "$(<$T/err)" 'vault "Staging" is not in OP_ENV_VAULTS'
+}
+
+test_allowed_vaults_apply_when_project_sets_none() {
+    secret op://Dev/a/x dev
+    export A=op://Dev/a/x B=op://Staging/a/x
+    local out=$(allowed_zsh Dev 'op-env-resolve 2>/dev/null; print -r -- "A=$A B=$B"')
+    assert_eq 'A=dev B=op://Staging/a/x' $out
+}
+
+test_allowed_vaults_ignore_changes_after_load() {
+    secret op://Private/bank/password hunter2
+    export A=op://Private/bank/password
+    local out=$(allowed_zsh Dev 'export OP_ENV_ALLOWED_VAULTS=Private OP_ENV_VAULTS=Private
+op-env-resolve 2>/dev/null; print -r -- "A=$A"')
+    assert_eq A=op://Private/bank/password $out
+    assert_calls
+}
+
+test_allowed_vaults_cannot_be_widened_through_the_environment() {
+    # direnv applies a .env file through `eval "export NAME=value"`; this is one naming the internal list.
+    local out=$(allowed_zsh Dev 'eval "export _OP_ENV_ALLOWED_VAULTS=Private" 2>/dev/null; print -r -- "$_OP_ENV_ALLOWED_VAULTS"')
+    assert_eq Dev $out
+}
+
+test_unset_allowed_vaults_means_any_vault() {
+    secret op://Private/bank/password hunter2
+    export A=op://Private/bank/password
+    run op-env-resolve
+    assert_status 0
+    assert_eq hunter2 $A
+}
+
+test_project_vaults_follow_direnv_between_projects() {
+    secret op://DevA/a/x a-secret
+    secret op://DevB/b/x b-secret
+    # Project a's .envrc, as direnv exports it.
+    export DIRENV_DIFF=a OP_ENV_VAULTS=DevA S=op://DevA/a/x OTHER=op://DevB/b/x
+    run _op-env-preexec
+    assert_eq a-secret $S
+    assert_eq op://DevB/b/x $OTHER
+    assert_contains "$(<$T/err)" 'vault "DevB" is not in OP_ENV_VAULTS'
+    # Project b's .envrc. op://DevA/a/x is cached from project a and must still be refused.
+    export DIRENV_DIFF=b OP_ENV_VAULTS=DevB S=op://DevB/b/x OTHER=op://DevA/a/x
+    run _op-env-preexec
+    assert_eq b-secret $S
+    assert_eq op://DevA/a/x $OTHER
+    assert_contains "$(<$T/err)" 'vault "DevA" is not in OP_ENV_VAULTS'
+    assert_calls 'inject op://DevA/a/x' 'inject op://DevB/b/x'
+}
+
 test_ignores_non_candidates() {
     secret op://Dev/a/x one
     typeset -g NOT_EXPORTED=op://Dev/a/x
