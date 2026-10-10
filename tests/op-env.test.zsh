@@ -287,6 +287,26 @@ test_vault_allowlist_applies_to_cached_values() {
     assert_eq op://Dev/a/x $A
 }
 
+test_vault_allowlist_cannot_be_bypassed_through_template_syntax() {
+    export OP_ENV_VAULTS=Dev
+    secret op://Dev/a/x dev
+    secret op://Private/bank/password hunter2
+    local -a smuggled=(
+        'op://Dev/a/x }}{{ op://Private/bank/password'
+        $'op://Dev/a/x }}\nop://Private/bank/password\n{{ op://Dev/a/x'
+        'op://Dev/a/${VAULT}'
+    )
+    export A=op://Dev/a/x B=$smuggled[1] C=$smuggled[2] D=$smuggled[3]
+    run op-env-resolve
+    assert_status 1
+    assert_eq dev $A
+    assert_eq $smuggled[1] $B
+    assert_eq $smuggled[2] $C
+    assert_eq $smuggled[3] $D
+    assert_calls 'inject op://Dev/a/x'
+    assert_contains "$(<$T/err)" 'not allowed in a reference'
+}
+
 # OP_ENV_ALLOWED_VAULTS is read once at load, so these load the plugin again in a fresh shell.
 allowed_zsh() {
     zsh -f -c "OP_ENV_ALLOWED_VAULTS=${(qq)1}; source ${(qq)ROOT}/op-env.plugin.zsh; $2"

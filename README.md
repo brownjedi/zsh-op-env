@@ -201,6 +201,10 @@ come back intact.
   `OP_ENV_ALLOWED_VAULTS` in `~/.zshrc` to the vaults your projects actually
   use to limit what such a reference can reach. `OP_ENV_VAULTS` alone does not
   protect you here: the same `.env` file can set it too.
+- References containing `{`, `}`, `$` or a control character are refused and
+  never sent to `op`, which would read them as template syntax: otherwise
+  `op://Dev/a/x }}{{ op://Private/bank/password` would pass the vault checks
+  and still resolve the `Private` secret.
 
 ## Development
 

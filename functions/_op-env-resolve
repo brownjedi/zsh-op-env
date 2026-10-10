@@ -36,8 +36,12 @@ _op-env-split-vaults _oe_vaults "${OP_ENV_VAULTS:-}"
 for _oe_name in ${(ko)_oe_refof}; do
     _oe_ref=$_oe_refof[$_oe_name]
     _oe_vault=${${_oe_ref#op://}%%/*}
+    # op inject would read these as template syntax ("}}{{", bare refs on new lines, $VAR), smuggling refs past the vault checks.
+    if [[ $_oe_ref == *[\{\}\$[:cntrl:]]* ]]; then
+        _oe_why[$_oe_ref]='"{", "}", "$" and control characters are not allowed in a reference'
+        _oe_todo+=($_oe_name)
     # Checked before the cache, so narrowing either list also stops serving cached values.
-    if (( $#_OP_ENV_ALLOWED_VAULTS )) && (( ! ${_OP_ENV_ALLOWED_VAULTS[(Ie)$_oe_vault]} )); then
+    elif (( $#_OP_ENV_ALLOWED_VAULTS )) && (( ! ${_OP_ENV_ALLOWED_VAULTS[(Ie)$_oe_vault]} )); then
         _oe_why[$_oe_ref]="vault \"$_oe_vault\" is not in OP_ENV_ALLOWED_VAULTS"
         _oe_todo+=($_oe_name)
     elif (( $#_oe_vaults )) && (( ! ${_oe_vaults[(Ie)$_oe_vault]} )); then
