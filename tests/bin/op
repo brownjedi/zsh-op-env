@@ -1,0 +1,61 @@
+#!/usr/bin/env -S zsh -f
+# Fake `op` for tests. Secrets come from $FAKE_OP_DIR/secrets.zsh; each call is appended to $FAKE_OP_DIR/calls.
+# FAKE_OP_INJECT=fail|signed-out|interrupt|passthrough and FAKE_OP_READ=signed-out|interrupt simulate failures.
+emulate zsh -o extended_glob
+typeset -A secrets
+source $FAKE_OP_DIR/secrets.zsh
+
+signed_out() {
+    print -ru2 -- '[ERROR] 2026/10/10 12:00:00 You are not currently signed in. Please run `op signin --help` for instructions'
+    exit 1
+}
+
+case $1 in
+    inject)
+        tmpl=$(cat; print -n x)
+        tmpl=${tmpl%x}
+        refs=()
+        rest=$tmpl
+        while [[ $rest == (#b)(*)'{{ '([^ ]##)' }}'* ]]; do
+            refs[1,0]=($match[2])
+            rest=$match[1]
+        done
+        print -r -- "inject $refs" >>$FAKE_OP_DIR/calls
+        case ${FAKE_OP_INJECT:-} in
+            fail) print -ru2 -- '[ERROR] 2026/10/10 12:00:00 inject failed'; exit 1 ;;
+            signed-out) signed_out ;;
+            interrupt) exit 130 ;;
+        esac
+        # Right to left, so substituted values are never rescanned for templates.
+        rest=$tmpl out=''
+        while [[ $rest == (#b)(*)'{{ '([^ ]##)' }}'(*) ]]; do
+            ref=$match[2] tail=$match[3] rest=$match[1]
+            if (( $+secrets[$ref] )); then
+                out=$secrets[$ref]$tail$out
+            elif [[ ${FAKE_OP_INJECT:-} == passthrough ]]; then
+                out="{{ $ref }}$tail$out"
+            else
+                print -ru2 -- "[ERROR] 2026/10/10 12:00:00 could not resolve item for $ref"
+                exit 1
+            fi
+        done
+        print -rn -- $rest$out
+        ;;
+    read)
+        ref=$argv[-1]
+        print -r -- "read $ref" >>$FAKE_OP_DIR/calls
+        case ${FAKE_OP_READ:-} in
+            signed-out) signed_out ;;
+            interrupt) exit 130 ;;
+        esac
+        if (( ! $+secrets[$ref] )); then
+            print -ru2 -- "[ERROR] 2026/10/10 12:00:00 could not read secret '$ref': could not find item"
+            exit 1
+        fi
+        print -rn -- $secrets[$ref]
+        ;;
+    *)
+        print -ru2 -- "fake op: unsupported command: $*"
+        exit 2
+        ;;
+esac

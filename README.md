@@ -154,6 +154,16 @@ come back intact.
   `OP_ENV_VAULTS` to the vaults your projects actually use to limit what such
   a reference can reach.
 
+## Development
+
+```zsh
+zsh tests/run.zsh           # all tests
+zsh tests/run.zsh vault     # tests whose name contains "vault"
+```
+
+The tests use a fake `op` (`tests/bin/op`), so they need no 1Password account
+and never touch real secrets.
+
 ## Disclaimer
 
 This plugin was built with AI assistance (Claude, by Anthropic). It handles
