@@ -87,15 +87,15 @@ plugins=(... direnv op-env)
 
 ## Configuration
 
-| Variable                    | Effect                                                                                                                                                                                                                             |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OP_ENV_ALLOWED_VAULTS=Dev` | The most any project may use. Read once, when the plugin loads, so set it _before_ loading. `OP_ENV_VAULTS` can only narrow it. Unset means any vault.                                                                             |
-| `OP_ENV_DEBUG=1`            | Trace every pass, including the hook-driven ones.                                                                                                                                                                                  |
-| `OP_ENV_HOOK=direnv`        | Default. Resolve before the first command, then only when direnv loads, reloads or unloads an `.envrc` (`$DIRENV_DIFF` changes).                                                                                                   |
-| `OP_ENV_HOOK=always`        | Scan before every command, so references exported any other way (by hand, by another plugin) are resolved too.                                                                                                                     |
-| `OP_ENV_HOOK=off`           | Don't install the preexec hook; call `op-env-resolve` yourself. Set it _before_ loading.                                                                                                                                           |
-| `OP_ENV_NO_CACHE=1`         | Ask `op` every pass instead of caching values in memory.                                                                                                                                                                           |
-| `OP_ENV_VAULTS=Dev`         | Only resolve references into these vaults. Others are refused with a warning and never sent to `op`. Read on every pass, so a project can set it in its `.envrc`. Unset means every vault `OP_ENV_ALLOWED_VAULTS` allows.          |
+| Variable                    | Effect                                                                                                                                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OP_ENV_ALLOWED_VAULTS=Dev` | The most any project may use. Read once, when the plugin loads, so set it _before_ loading. `OP_ENV_VAULTS` can only narrow it. Unset means any vault.                                                                    |
+| `OP_ENV_DEBUG=1`            | Trace every pass, including the hook-driven ones.                                                                                                                                                                         |
+| `OP_ENV_HOOK=direnv`        | Default. Resolve before the first command, then only when direnv loads, reloads or unloads an `.envrc` (`$DIRENV_DIFF` changes).                                                                                          |
+| `OP_ENV_HOOK=always`        | Scan before every command, so references exported any other way (by hand, by another plugin) are resolved too.                                                                                                            |
+| `OP_ENV_HOOK=off`           | Don't install the preexec hook; call `op-env-resolve` yourself. Set it _before_ loading.                                                                                                                                  |
+| `OP_ENV_NO_CACHE=1`         | Ask `op` every pass instead of caching values in memory.                                                                                                                                                                  |
+| `OP_ENV_VAULTS=Dev`         | Only resolve references into these vaults. Others are refused with a warning and never sent to `op`. Read on every pass, so a project can set it in its `.envrc`. Unset means every vault `OP_ENV_ALLOWED_VAULTS` allows. |
 
 Both vault lists are comma-separated and matched exactly against the vault
 part of the reference (name or ID, case-sensitive). Spaces around entries are
@@ -131,6 +131,34 @@ you leave a project, direnv unloads its `OP_ENV_VAULTS` along with its secrets.
 
 Without `OP_ENV_ALLOWED_VAULTS`, nothing is restricted unless a project sets
 `OP_ENV_VAULTS`, and a project's own files can always set it to any vault.
+
+### `.env` files
+
+To keep a `.env` file, put references in it instead of values and have
+direnv load it with `dotenv` or `dotenv_if_exists`:
+
+```bash
+# .env
+DB_PASSWORD=op://Dev/db/password
+DATABASE_URL="postgres://{{ op://Dev/db/user }}:{{ op://Dev/db/password }}@db/app"
+```
+
+```bash
+# .envrc
+dotenv_if_exists
+```
+
+After `direnv allow`, direnv exports the variables and the plugin resolves
+them like any other. The file holds no values, so it is safe to commit.
+
+The file itself still contains references. A program that reads `.env` on
+its own sees the resolved values only if its loader keeps variables already in
+the environment, which is the default for Node's `dotenv`, `python-dotenv`
+and Vite. Loaders that override, or that pass the file straight through (for
+example Docker Compose `env_file:`), get the `op://` text.
+
+Changes to `.env` do not need a new `direnv allow`, so set
+`OP_ENV_ALLOWED_VAULTS` (see [Security notes](#security-notes)).
 
 ## How it works
 
@@ -247,6 +275,111 @@ come back intact.
 - A value the plugin set is never treated as a reference again, even if the
   secret itself contains `op://` text or `{{ }}` tags, so a secret cannot make
   the plugin read another secret.
+
+## Compared with 1Password Environments
+
+[1Password Environments](https://www.1password.dev/environments/overview.md)
+solve a similar problem in a different way. An Environment is a set of
+key-value variables stored in 1Password, separate from vault items. You
+create one in the desktop app (or import an existing `.env`), then deliver
+it through a
+[locally mounted `.env` file](https://www.1password.dev/environments/local-env-file.md),
+[`op run --environment <id> -- <command>` or `op environment read <id>`](https://www.1password.dev/environments/read-environment-variables.md),
+the Go, JavaScript and Python SDKs, an
+[MCP server](https://www.1password.dev/environments/mcp-server.md), or a sync
+to AWS Secrets Manager.
+
+This plugin keeps secrets as ordinary vault items and points at them with
+`op://` references from `.envrc`. The two are not mutually exclusive.
+
+This comparison reflects the 1Password docs as of October 2026. Environments
+were still changing then (the CLI commands were in beta), so check the linked
+pages for the current state.
+
+### At a glance
+
+|                           | zsh-op-env                                                                                         | 1Password Environments                                                                                                                     |
+| ------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Where secrets live        | Ordinary vault items, any field                                                                    | Environments, a separate store of key-value variables                                                                                      |
+| What the project commits  | `.envrc`, or a `.env` it loads, with `op://` references: readable, reviewable, no values           | Nothing. The mounted `.env` path must stay untracked, and `op run` needs the Environment ID                                                |
+| How values arrive         | Exported into your interactive shell, inherited by every command you run                           | Read on demand from a FIFO `.env` file, or injected into one subprocess by `op run`, or fetched by an SDK                                  |
+| One secret, many projects | One vault item referenced from any number of `.envrc` files; rotate it once                        | Variables belong to an Environment. The docs describe no way to reference a vault item, so a shared secret is copied into each Environment |
+| Composing values          | `{{ op://... }}` tags inside a value, e.g. a `postgres://` URL built from user and password fields | Each variable is a literal value                                                                                                           |
+| Access control            | Vault permissions, plus `OP_ENV_ALLOWED_VAULTS` / `OP_ENV_VAULTS` on top                           | Per-Environment view, edit and manage permissions, granted separately for each Environment                                                 |
+| Prompts and caching       | One `op inject` batch per change, then an in-memory cache for the life of the shell                | Desktop app authorizes a read, and the approval lasts until 1Password locks                                                                |
+| Output masking            | None                                                                                               | Variables are hidden by default and masked in CLI and SDK output                                                                           |
+| Shell and OS              | zsh 5.3+ only, wherever zsh and `op` run                                                           | Any shell. Desktop app on macOS, Windows and Linux; mounted `.env` files on macOS and Linux only                                           |
+| Prerequisites             | `op`, signed in any way it supports. direnv optional                                               | 1Password subscription, desktop app, and an Owner or Administrator must turn on the Environments policy                                    |
+| Limits                    | None of its own                                                                                    | Up to ten enabled mounted `.env` files per device                                                                                          |
+| CI and automation         | Not its job: the hook only runs in interactive shells. Use `op run` or `op inject` there           | Service accounts with scoped access, SDKs, AWS Secrets Manager sync                                                                        |
+| AI coding agents          | An agent started from a resolved shell inherits the plaintext values                               | MCP server and agent plugins that, by design, never return secret values to the agent                                                      |
+| Cost and maturity         | MIT, about 300 lines of zsh, built with AI assistance                                              | First-party and supported by 1Password; CLI commands in beta                                                                               |
+
+### Pros of zsh-op-env
+
+- **Uses the vault items you already have.** No migration and no second copy
+  of a secret. A key used by five projects is one item, so rotation is one
+  edit.
+- **The project documents itself.** Which secret feeds which variable is
+  visible in `.envrc` or `.env`, in the repository and in code review, without
+  exposing a value. An Environment's contents are only visible in 1Password.
+- **Keeps your `.env` file.** Replace values with references and load the file
+  with direnv's `dotenv` (see [`.env` files](#env-files)). The file is a
+  regular file, so none of the FIFO problems below apply.
+- **Works with every tool unchanged.** Values are plain environment
+  variables, so `make`, `docker compose`, test runners, debuggers and editors
+  launched from the shell see them without a wrapper or a `.env` loader.
+- **No FIFO side effects.** Mounted `.env` files have documented problems:
+  only the first of several concurrent readers is guaranteed to succeed, file
+  watchers such as Vite can restart in a loop because each read emits
+  filesystem events, and a previously tracked `.env` must be removed from Git
+  first. None of that applies to variables in the environment.
+- **Composes values.** `{{ op://... }}` tags build connection strings and URLs
+  from several fields; Environments store each variable as a literal.
+- **Few calls to `op`.** One batched `op inject` per change, then an
+  in-memory cache, so moving between directories does not re-prompt.
+- **No account policy needed.** It works with any account `op` can sign in
+  to, including ones where an administrator has not enabled Environments, and
+  has no per-device file limit.
+- **Small and auditable.** About 300 lines of zsh with a fake-`op` test suite.
+
+### Cons of zsh-op-env
+
+- **Secrets sit in your shell's environment.** Every child process inherits
+  them, anything running as your user can read `/proc/<pid>/environ`, and an
+  AI agent or other tool started from that shell gets them too. A mounted
+  `.env` or `op run` limits exposure to the process that asked.
+- **Any exported reference is resolved.** A malicious commit or a `.env`
+  loaded by `dotenv` can point a variable at any secret you can read (see
+  [Security notes](#security-notes)). `OP_ENV_ALLOWED_VAULTS` limits the blast
+  radius but has to be set. An Environment exposes only its own variables, so
+  a tampered project file cannot redirect it to another secret.
+- **zsh only, interactive only.** No bash, fish or Windows shells, no CI.
+  Scripts and pipelines still need `op run` or `op inject`.
+- **No masking.** A resolved value printed by a command appears in plain text.
+  `op run` masks secrets in output by default.
+- **Timing edge cases.** Commands on the same line as `cd` see raw references
+  unless you add `op-env-resolve` (see
+  [Commands on the same line as `cd`](#commands-on-the-same-line-as-cd)).
+- **Access control is per vault.** Sharing one project's secrets means
+  sharing a vault, or splitting items into project vaults. Environments grant
+  access per project.
+
+### Which to choose
+
+Choose this plugin if your secrets already live in vaults, you work in zsh
+with direnv, you want the mapping from variables to secrets reviewable in the
+repository, or you want to keep a `.env` file that holds references instead
+of values.
+
+Choose Environments if you want first-party support, per-project sharing with
+a team, values that never enter your shell's environment, protection from AI
+agents reading secrets, or the same variables in CI and AWS through service
+accounts and sync.
+
+The two can share a machine. This plugin only acts on exported `op://`
+references, so it ignores projects that use a mounted `.env` file or
+`op run --environment`.
 
 ## Development
 
