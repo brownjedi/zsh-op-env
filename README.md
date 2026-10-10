@@ -182,6 +182,8 @@ Write `export B="{{ $A }}:8080"` instead.
   value is never handed to `op inject` as a template, so `op`'s own variable
   expansion does not apply.
 - All or nothing: if any tag fails, the variable keeps its original value.
+- Tags don't nest. As with `op inject`, `{{ op://Dev/{{ op://Dev/a/x }}/f }}`
+  is refused; compose with shell variables instead.
 - Substituted secrets are not scanned again, so a secret whose value contains
   `{{ op://... }}` stays verbatim.
 

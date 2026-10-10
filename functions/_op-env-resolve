@@ -9,7 +9,7 @@ setopt local_options no_xtrace no_verbose
 # Prefixed so a local cannot shadow an exported variable of the same name.
 local _oe_name _oe_ref _oe_value _oe_line _oe_sig _oe_abort _oe_tmp _oe_out _oe_err _oe_injecterr _oe_vault
 local _oe_rest _oe_head _oe_lit
-local -i _oe_st _oe_idx
+local -i _oe_st _oe_idx _oe_nested
 # _oe_partsof: name -> NUL-joined (text ref text ref ... text). A whole-value ref is ('' ref '').
 local -A _oe_valof _oe_partsof _oe_got _oe_why
 local -a _oe_failed _oe_shout _oe_acc _oe_lines _oe_vaults _oe_parts
@@ -21,20 +21,29 @@ for _oe_name in ${(k)parameters[(R)scalar*export*]}; do
     _oe_value=${(P)_oe_name}
     # A value this plugin set is a secret, not a ref, even if it holds op:// text.
     (( $+_OP_ENV_RESOLVED[$_oe_name] )) && [[ $_oe_value == "$_OP_ENV_RESOLVED[$_oe_name]" ]] && continue
-    _oe_parts=() _oe_lit='' _oe_rest=$_oe_value
+    _oe_parts=() _oe_lit='' _oe_rest=$_oe_value _oe_nested=0
     # Innermost {{ }} pairs only; anything that is not a {{ op://... }} tag stays literal text.
     while [[ $_oe_rest == *'}}'* ]]; do
         _oe_head=${_oe_rest%%'}}'*}
         _oe_rest=${_oe_rest#*'}}'}
         _oe_ref=${${${_oe_head##*'{{'}##[[:blank:]]#}%%[[:blank:]]#}
         if [[ $_oe_head == *'{{'* && $_oe_ref == op://?* ]]; then
+            # op inject rejects a tag inside a tag; resolving just the inner one would leave a template that never resolves.
+            if [[ ${_oe_head%'{{'*} == *'{{'[[:blank:]]#op://* ]]; then
+                _oe_nested=1
+                break
+            fi
             _oe_parts+=("$_oe_lit${_oe_head%'{{'*}" "$_oe_ref")
             _oe_lit=''
         else
             _oe_lit+="$_oe_head}}"
         fi
     done
-    if (( $#_oe_parts )); then
+    # The whole value stands in for the ref, so it fails and is reported like one, and never reaches op.
+    if (( _oe_nested )); then
+        _oe_parts=('' "$_oe_value" '')
+        _oe_why[$_oe_value]='nested {{ }} tags are not supported (op inject rejects them too)'
+    elif (( $#_oe_parts )); then
         _oe_parts+=("$_oe_lit$_oe_rest")
     elif [[ $_oe_value == op://?* ]]; then
         _oe_parts=('' "$_oe_value" '')
@@ -43,6 +52,7 @@ for _oe_name in ${(k)parameters[(R)scalar*export*]}; do
     fi
     _oe_valof[$_oe_name]=$_oe_value
     _oe_partsof[$_oe_name]=${(pj:\0:)_oe_parts}
+    (( _oe_nested )) && continue
     for (( _oe_idx = 2; _oe_idx < $#_oe_parts; _oe_idx += 2 )); do
         _oe_cand+=("$_oe_parts[_oe_idx]")
     done

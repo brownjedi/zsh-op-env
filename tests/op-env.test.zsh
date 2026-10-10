@@ -365,6 +365,19 @@ test_tags_resolve_all_or_nothing() {
     assert_not_contains "$(<$T/err)" '  A  op://Dev/a/x'
 }
 
+test_nested_tags_fail_like_op_inject() {
+    secret op://Dev/name/x item
+    secret op://Dev/item/f deep
+    local tmpl='x={{ op://Dev/{{ op://Dev/name/x }}/f }}'
+    export A=$tmpl B=op://Dev/name/x
+    run op-env-resolve
+    assert_status 1
+    assert_eq $tmpl $A
+    assert_eq item $B
+    assert_calls 'inject op://Dev/name/x'
+    assert_contains "$(<$T/err)" 'nested {{ }} tags are not supported'
+}
+
 test_tags_obey_vault_checks() {
     export OP_ENV_VAULTS=Dev
     secret op://Dev/a/x dev
