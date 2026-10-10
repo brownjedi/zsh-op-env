@@ -1,0 +1,6 @@
+# op-env-flush: drop cached values and warnings. Resolved vars stay; `direnv reload` re-exports their refs.
+emulate -L zsh
+_OP_ENV_CACHE=()
+_OP_ENV_WARNED=()
+_OP_ENV_LAST_SIG=''
+print -r -- 'op-env: cache cleared'

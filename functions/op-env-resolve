@@ -1,0 +1,17 @@
+# op-env-resolve [-d|--debug]: force a pass now, even if the last pass failed on the same refs.
+emulate -L zsh
+# Prefixed so it cannot shadow an exported var that _op-env-resolve has to see and set.
+local -i _oe_dbg=0
+while (( $# )); do
+    case $1 in
+        -d|--debug) _oe_dbg=1; shift ;;
+        -h|--help)
+            print -r -- 'usage: op-env-resolve [-d|--debug]'
+            print -r -- '  Resolves exported op:// references in this shell.'
+            print -r -- '  See also: op-env-flush'
+            return 0 ;;
+        *) print -ru2 -- "op-env-resolve: unknown option: $1"; return 2 ;;
+    esac
+done
+(( _oe_dbg )) && local OP_ENV_DEBUG=1
+_op-env-resolve

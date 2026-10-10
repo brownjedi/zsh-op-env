@@ -1,0 +1,171 @@
+# Resolve every exported op:// reference in the environment, in place.
+# --if-changed: do nothing if the refs found are the ones the last pass failed on.
+# Returns 1 if any reference is left unresolved.
+
+emulate -L zsh -o extended_glob -o no_aliases
+# no_xtrace keeps secrets out of `set -x` output.
+setopt local_options no_xtrace no_verbose
+
+# Prefixed so a local cannot shadow an exported variable of the same name.
+local _oe_name _oe_ref _oe_value _oe_line _oe_sig _oe_abort _oe_tmp _oe_out _oe_err _oe_injecterr _oe_vault
+local -i _oe_st _oe_idx
+local -A _oe_refof _oe_got _oe_why
+local -a _oe_todo _oe_failed _oe_shout _oe_acc _oe_lines _oe_vaults
+local -aU _oe_refs
+
+for _oe_name in ${(k)parameters[(R)scalar*export*]}; do
+    [[ $_oe_name == [A-Za-z_][A-Za-z0-9_]# ]]     || continue
+    [[ ${parameters[$_oe_name]} == *readonly* ]] && continue
+    _oe_ref=${(P)_oe_name}
+    [[ $_oe_ref == op://?* ]] || continue
+    _oe_refof[$_oe_name]=$_oe_ref
+done
+for _oe_name in ${(ko)_oe_refof}; do
+    _oe_sig+="$_oe_name=$_oe_refof[$_oe_name]"$'\0'
+done
+[[ $1 == --if-changed && $_oe_sig == $_OP_ENV_LAST_SIG ]] && return 0
+
+if (( ! $#_oe_refof )); then
+    _op-env-dbg "no exported op:// references in the environment"
+    _OP_ENV_LAST_SIG=''
+    return 0
+fi
+_op-env-dbg "found ${#_oe_refof} ref(s): ${(ko)_oe_refof}"
+
+for _oe_vault in ${(s:,:)OP_ENV_VAULTS:-}; do
+    _oe_vaults+=(${${_oe_vault##[[:space:]]#}%%[[:space:]]#})
+done
+for _oe_name in ${(ko)_oe_refof}; do
+    _oe_ref=$_oe_refof[$_oe_name]
+    _oe_vault=${${_oe_ref#op://}%%/*}
+    # Checked before the cache, so narrowing OP_ENV_VAULTS also stops serving cached values.
+    if (( $#_oe_vaults )) && (( ! ${_oe_vaults[(Ie)$_oe_vault]} )); then
+        _oe_why[$_oe_ref]="vault \"$_oe_vault\" is not in OP_ENV_VAULTS"
+        _oe_todo+=($_oe_name)
+    elif [[ -z ${OP_ENV_NO_CACHE:-} ]] && (( $+_OP_ENV_CACHE[$_oe_ref] )); then
+        typeset -gx "$_oe_name=$_OP_ENV_CACHE[$_oe_ref]"
+    else
+        _oe_todo+=($_oe_name)
+        _oe_refs+=($_oe_ref)
+    fi
+done
+if (( ! $#_oe_todo )); then
+    _op-env-dbg "all ${#_oe_refof} ref(s) served from cache"
+    _OP_ENV_LAST_SIG=''
+    return 0
+fi
+_op-env-dbg "to resolve: $_oe_todo"
+
+if (( $#_oe_refs )); then
+    (( $+commands[op] )) || _oe_abort='`op` not found in PATH'
+    _oe_tmp=$(mktemp) || return 1
+
+    # --- fast path: one `op inject` call for the whole batch --------------------
+
+    if [[ -z $_oe_abort ]]; then
+        # Random delimiter lines, not NAME=value, so values with "=", newlines or trailing blank lines survive.
+        local _oe_nl=$'\n' _oe_sep="__op_env_sep_${RANDOM}${RANDOM}__" _oe_template=''
+        for (( _oe_idx = 1; _oe_idx <= $#_oe_refs; _oe_idx++ )); do
+            _oe_template+="${_oe_idx}${_oe_nl}{{ $_oe_refs[_oe_idx] }}${_oe_nl}${_oe_sep}${_oe_nl}"
+        done
+
+        _oe_out=$(print -rn -- $_oe_template | op inject 2>$_oe_tmp)
+        _oe_st=$?
+        _oe_injecterr=$(<$_oe_tmp)
+        _op-env-dbg "op inject exited $_oe_st, ${#_oe_out} bytes out, ${#_oe_injecterr} bytes stderr"
+
+        if (( _oe_st == 0 )); then
+            # Line walk, not (s) split: (s) cannot split on a multi-line delimiter, and (@f) keeps empty lines.
+            _oe_idx=0
+            for _oe_line in "${(@f)_oe_out}"; do
+                if (( ! _oe_idx )); then
+                    [[ $_oe_line == <1-> ]] && _oe_idx=$_oe_line
+                    _oe_acc=()
+                    continue
+                fi
+                if [[ $_oe_line == "$_oe_sep" ]]; then
+                    _oe_value=${(pj:\n:)_oe_acc}
+                    _oe_ref=$_oe_refs[_oe_idx]
+                    _oe_idx=0
+                    [[ -n $_oe_ref ]] || continue
+                    # op passes unresolvable templates through; compare to this ref so a secret containing "op://" is kept.
+                    if [[ $_oe_value == ('{{'*$_oe_ref*'}}'|$_oe_ref) ]]; then
+                        _oe_why[$_oe_ref]='op inject left the template unresolved'
+                        continue
+                    fi
+                    _oe_got[$_oe_ref]=$_oe_value
+                    _op-env-dbg "  $_oe_ref <- ${#_oe_value} bytes via inject"
+                    continue
+                fi
+                _oe_acc+=("$_oe_line")
+            done
+        elif (( _oe_st > 128 )); then
+            _oe_abort="op inject interrupted (exit $_oe_st)"
+        fi
+    fi
+
+    # --- slow path: whatever the batch did not produce -------------------------
+
+    # One ref at a time, so a single bad ref cannot hold the rest hostage and the error names it.
+    for _oe_ref in $_oe_refs; do
+        (( $+_oe_got[$_oe_ref] )) && continue
+        if [[ -n $_oe_abort ]]; then
+            _oe_why[$_oe_ref]=$_oe_abort
+            continue
+        fi
+        [[ -n ${_oe_why[$_oe_ref]:-} ]] || _oe_why[$_oe_ref]='missing from the op inject output'
+        # Trailing x stops $(...) from stripping the secret's own trailing newlines.
+        _oe_value=$(op read --no-newline -- $_oe_ref 2>$_oe_tmp && print -n x)
+        _oe_st=$?
+        if (( _oe_st == 0 )); then
+            _oe_got[$_oe_ref]=${_oe_value%x}
+            _op-env-dbg "  $_oe_ref <- ${#_oe_got[$_oe_ref]} bytes via op read (inject said: $_oe_why[$_oe_ref])"
+            continue
+        fi
+        _oe_err=$(<$_oe_tmp)
+        _oe_why[$_oe_ref]=${_oe_err:-$_oe_why[$_oe_ref]}
+        _op-env-dbg "  $_oe_ref FAILED: $_oe_why[$_oe_ref]"
+        # Anything but a per-ref error (signed out, prompt dismissed) would repeat, and re-prompt, for every ref.
+        if (( _oe_st > 128 )) || [[ $_oe_err != (#i)*(isn?t a|invalid secret reference|more than one|could not find)* ]]; then
+            _oe_abort="skipped after $_oe_ref failed: ${_oe_why[$_oe_ref]%%$'\n'*}"
+        fi
+    done
+    rm -f -- $_oe_tmp
+fi
+
+for _oe_name in $_oe_todo; do
+    _oe_ref=$_oe_refof[$_oe_name]
+    if (( $+_oe_got[$_oe_ref] )); then
+        typeset -gx "$_oe_name=$_oe_got[$_oe_ref]"
+        [[ -n ${OP_ENV_NO_CACHE:-} ]] || _OP_ENV_CACHE[$_oe_ref]=$_oe_got[$_oe_ref]
+        unset "_OP_ENV_WARNED[$_oe_ref]"
+    else
+        _oe_failed+=($_oe_name)
+    fi
+done
+
+_oe_sig=''
+for _oe_name in ${(ko)_oe_refof}; do
+    (( ${_oe_failed[(Ie)$_oe_name]} )) && _oe_sig+="$_oe_name=$_oe_refof[$_oe_name]"$'\0'
+done
+_OP_ENV_LAST_SIG=$_oe_sig
+
+# Failed vars keep their op:// value: visibly unresolved beats silently empty. Each ref is reported once.
+for _oe_name in $_oe_failed; do
+    (( $+_OP_ENV_WARNED[$_oe_refof[$_oe_name]] )) || _oe_shout+=($_oe_name)
+done
+if (( $#_oe_shout )); then
+    print -ru2 -- "op-env: could not resolve ${(j:, :)_oe_shout} (still set to their op:// refs)"
+    for _oe_name in $_oe_shout; do
+        _oe_ref=$_oe_refof[$_oe_name]
+        _OP_ENV_WARNED[$_oe_ref]=1
+        print -ru2 -- "  $_oe_name  $_oe_ref"
+        print -ru2 -- "      ${${_oe_why[$_oe_ref]:-unknown}//$'\n'/ }"
+    done
+    if [[ -n $_oe_injecterr ]]; then
+        _oe_lines=("${(@f)_oe_injecterr}")
+        print -ru2 -- "  op inject: ${(j:; :)_oe_lines[1,2]}"
+    fi
+    print -ru2 -- "  details: OP_ENV_DEBUG=1 op-env-resolve"
+fi
+(( ! $#_oe_failed ))

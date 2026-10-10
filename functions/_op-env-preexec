@@ -1,0 +1,3 @@
+# preexec, not precmd: direnv's precmd has always run by now, whatever order the hooks were added in.
+_op-env-resolve --if-changed
+return 0
