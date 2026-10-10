@@ -135,9 +135,10 @@ Without `OP_ENV_ALLOWED_VAULTS`, nothing is restricted unless a project sets
 ## How it works
 
 Before a command runs (a `preexec` hook), the plugin scans `$parameters` for
-exported scalars whose value is a bare `op://` reference. Running at `preexec`
-rather than `precmd` means direnv's hook has always run first, so the command
-you just typed sees the resolved values.
+exported scalars whose value is a bare `op://` reference or contains
+`{{ op://... }}` tags. Running at `preexec` rather than `precmd` means direnv's
+hook has always run first, so the command you just typed sees the resolved
+values.
 
 By default the scan runs before the first command and then only when
 `$DIRENV_DIFF` changes, which direnv does whenever it loads, reloads or unloads
@@ -145,9 +146,9 @@ an `.envrc`. Resolving a variable in place does not change `$DIRENV_DIFF`, so
 on a normal command the hook does a single string comparison. One extra check
 covers `cd .. && cd -` in a single command line, where direnv unloads and
 reloads and ends with the same diff: if a variable the plugin resolved holds
-its `op://` reference again, the scan runs anyway. With `OP_ENV_HOOK=always`
-the scan runs before every command; once a reference is resolved its variable
-no longer holds `op://`, so the scan finds nothing and no `op` call is made.
+its reference again, the scan runs anyway. With `OP_ENV_HOOK=always` the scan
+runs before every command; it skips values the plugin set itself, so once
+everything is resolved no `op` call is made.
 
 Everything the scan finds is resolved in a single `op inject` call. References
 already resolved in this shell come from an in-memory cache, so moving between
@@ -159,6 +160,30 @@ batch, and the error message can name the one that actually broke. If
 `op read` fails for any other reason (signed out, authorization prompt
 dismissed), the remaining references are skipped instead of prompting once
 each.
+
+### References inside a value
+
+To combine a secret with other text, wrap the reference in `{{ }}`, the tag
+syntax `op inject` uses:
+
+```bash
+# .envrc
+export API_ADDR='{{ op://Dev/api/host }}:8443'
+export DATABASE_URL='postgres://{{ op://Dev/db/user }}:{{ op://Dev/db/password }}@db/app'
+```
+
+`export B="$A:8080"` does not work: the shell expands `$A` while it still holds
+the reference, so `B` becomes `op://...:8080`, which names a different field.
+Write `export B="{{ $A }}:8080"` instead.
+
+- Each tag's reference gets the same vault checks, batch and cache as a
+  whole-value reference.
+- Text outside tags is kept as is, including a bare `op://` and `$VAR`. Your
+  value is never handed to `op inject` as a template, so `op`'s own variable
+  expansion does not apply.
+- All or nothing: if any tag fails, the variable keeps its original value.
+- Substituted secrets are not scanned again, so a secret whose value contains
+  `{{ op://... }}` stays verbatim.
 
 ### Commands on the same line as `cd`
 
@@ -217,6 +242,9 @@ come back intact.
   never sent to `op`, which would read them as template syntax: otherwise
   `op://Dev/a/x }}{{ op://Private/bank/password` would pass the vault checks
   and still resolve the `Private` secret.
+- A value the plugin set is never treated as a reference again, even if the
+  secret itself contains `op://` text or `{{ }}` tags, so a secret cannot make
+  the plugin read another secret.
 
 ## Development
 

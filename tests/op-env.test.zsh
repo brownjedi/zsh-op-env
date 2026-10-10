@@ -88,7 +88,7 @@ test_bad_ref_does_not_block_others() {
     assert_eq op://Dev/missing/x $BAD
     assert_calls 'inject op://Dev/missing/x op://Dev/a/x' 'read op://Dev/missing/x' 'read op://Dev/a/x'
     local err=$(<$T/err)
-    assert_contains $err 'could not resolve BAD (still set to their op:// refs)'
+    assert_contains $err 'could not resolve BAD (left unchanged)'
     assert_contains $err 'could not find item'
     assert_contains $err 'op inject: [ERROR]'
     assert_not_contains $err GOOD
@@ -295,16 +295,111 @@ test_vault_allowlist_cannot_be_bypassed_through_template_syntax() {
         'op://Dev/a/x }}{{ op://Private/bank/password'
         $'op://Dev/a/x }}\nop://Private/bank/password\n{{ op://Dev/a/x'
         'op://Dev/a/${VAULT}'
+        'x={{ op://Dev/a/${VAULT} }}'
+        $'x={{ op://Dev/a/x\nop://Private/bank/password }}'
+        'x={{ op://Dev/a/{{ op://Private/bank/password }} }}'
     )
-    export A=op://Dev/a/x B=$smuggled[1] C=$smuggled[2] D=$smuggled[3]
+    export A=op://Dev/a/x B=$smuggled[1] C=$smuggled[2] D=$smuggled[3] E=$smuggled[4] F=$smuggled[5] G=$smuggled[6]
     run op-env-resolve
     assert_status 1
     assert_eq dev $A
     assert_eq $smuggled[1] $B
     assert_eq $smuggled[2] $C
     assert_eq $smuggled[3] $D
+    assert_eq $smuggled[4] $E
+    assert_eq $smuggled[5] $F
+    assert_eq $smuggled[6] $G
     assert_calls 'inject op://Dev/a/x'
     assert_contains "$(<$T/err)" 'not allowed in a reference'
+}
+
+test_resolves_tags_inside_a_value() {
+    secret op://Dev/db/host db.internal
+    secret op://Dev/db/user u
+    secret op://Dev/db/pass p
+    export HOST=op://Dev/db/host \
+        ADDR='{{ op://Dev/db/host }}:8080' \
+        URL='postgres://{{op://Dev/db/user}}:{{  op://Dev/db/pass  }}@{{ op://Dev/db/host }}/db'
+    run op-env-resolve
+    assert_status 0
+    assert_eq db.internal $HOST
+    assert_eq db.internal:8080 $ADDR
+    assert_eq postgres://u:p@db.internal/db $URL
+    assert_calls 'inject op://Dev/db/host op://Dev/db/user op://Dev/db/pass'
+}
+
+test_text_outside_tags_is_kept_verbatim() {
+    secret op://Dev/a/x one
+    local tmpl='op://Private/b/c }} {{ op://Dev/a/x }} {{ not a ref }} {{op:// }} $HOME {{ op://Dev/a/x }}'
+    export A=$tmpl
+    run op-env-resolve
+    assert_status 0
+    assert_eq 'op://Private/b/c }} one {{ not a ref }} {{op:// }} $HOME one' $A
+    assert_calls 'inject op://Dev/a/x'
+}
+
+test_tag_values_round_trip() {
+    local ref
+    integer i=0
+    for ref in ${(ok)VERBATIM}; do
+        secret $ref "$VERBATIM[$ref]"
+        export V$(( ++i ))="<{{ $ref }}>"
+    done
+    run op-env-resolve
+    assert_status 0
+    i=0
+    for ref in ${(ok)VERBATIM}; do
+        assert_eq "<$VERBATIM[$ref]>" "${(P)${:-V$(( ++i ))}}" $ref
+    done
+}
+
+test_tags_resolve_all_or_nothing() {
+    secret op://Dev/a/x one
+    local tmpl='{{ op://Dev/a/x }}:{{ op://Dev/missing/x }}'
+    export A=$tmpl
+    run op-env-resolve
+    assert_status 1
+    assert_eq $tmpl $A
+    assert_contains "$(<$T/err)" 'op-env: could not resolve A'
+    assert_contains "$(<$T/err)" '  A  op://Dev/missing/x'
+    assert_not_contains "$(<$T/err)" '  A  op://Dev/a/x'
+}
+
+test_tags_obey_vault_checks() {
+    export OP_ENV_VAULTS=Dev
+    secret op://Dev/a/x dev
+    secret op://Private/bank/password hunter2
+    local tmpl='{{ op://Dev/a/x }}{{ op://Private/bank/password }}'
+    export A=$tmpl
+    run op-env-resolve
+    assert_status 1
+    assert_eq $tmpl $A
+    assert_not_contains "$(<$T/calls)" Private
+    assert_contains "$(<$T/err)" 'vault "Private" is not in OP_ENV_VAULTS'
+}
+
+test_resolved_secret_holding_refs_is_not_resolved_again() {
+    secret op://Dev/a/x '{{ op://Dev/c/x }}'
+    secret op://Dev/b/x op://Dev/c/x
+    secret op://Dev/c/x other-secret
+    export A=op://Dev/a/x B=op://Dev/b/x
+    run op-env-resolve
+    run op-env-resolve
+    OP_ENV_HOOK=always run _op-env-preexec
+    assert_status 0
+    assert_eq '{{ op://Dev/c/x }}' $A
+    assert_eq op://Dev/c/x $B
+    assert_calls 'inject op://Dev/a/x op://Dev/b/x'
+}
+
+test_direnv_hook_catches_template_reload_within_one_command() {
+    secret op://Dev/a/x one
+    export DIRENV_DIFF=d1 A='{{ op://Dev/a/x }}:8080'
+    run _op-env-preexec
+    assert_eq one:8080 $A
+    export A='{{ op://Dev/a/x }}:8080'
+    run _op-env-preexec
+    assert_eq one:8080 $A
 }
 
 # OP_ENV_ALLOWED_VAULTS is read once at load, so these load the plugin again in a fresh shell.
@@ -394,7 +489,7 @@ test_debug_trace_omits_secret_values() {
     export A=op://Dev/a/x
     run op-env-resolve --debug
     local err=$(<$T/err)
-    assert_contains $err 'op-env: found 1 ref(s): A'
+    assert_contains $err 'op-env: found 1 var(s) with refs: A'
     assert_contains $err 'via inject'
     assert_not_contains $err s3cr3t
     export FAKE_OP_INJECT=fail B=op://Dev/b/x

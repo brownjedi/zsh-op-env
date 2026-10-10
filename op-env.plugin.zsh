@@ -17,8 +17,8 @@ typeset -gA _OP_ENV_CACHE
 typeset -gA _OP_ENV_WARNED
 # Refs the last pass failed on, so they are not retried before every command.
 typeset -g  _OP_ENV_LAST_SIG=''
-# Names holding a resolved secret, so the hook can spot one direnv set back to its op:// ref.
-typeset -gaU _OP_ENV_RESOLVED
+# name -> value the plugin set, so the hook can spot a ref direnv set back, and a secret holding op:// text is never resolved again.
+typeset -gA _OP_ENV_RESOLVED
 # _OP_ENV_LAST_DIFF: $DIRENV_DIFF the hook last ran for. Left unset so the first command always gets a pass.
 typeset -g OP_ENV_DEBUG="${OP_ENV_DEBUG:-}"
 
