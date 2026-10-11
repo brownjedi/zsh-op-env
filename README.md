@@ -22,7 +22,10 @@ export STRIPE_KEY=op://Dev/stripe/test-key
 
 ## Install
 
-Load order relative to direnv's hook does not matter.
+Load order relative to direnv's hook does not matter. Every option is
+optional. Set options in `~/.zshrc` before the plugin loads, whichever way you
+install it. The manual snippet lists them all; see
+[Configuration](#configuration) for details.
 
 <details open>
 <summary>Manual</summary>
@@ -30,6 +33,12 @@ Load order relative to direnv's hook does not matter.
 ```zsh
 # ~/.zshrc
 eval "$(direnv hook zsh)"
+
+# OP_ENV_ALLOWED_VAULTS=Work,Personal-Dev  # Vaults any project may use. Unset means every vault.
+# OP_ENV_HOOK=direnv                       # direnv (default), always or off
+# OP_ENV_NO_CACHE=1                        # ask op every pass instead of caching
+# OP_ENV_DEBUG=1                           # trace every pass; never prints values
+# OP_ENV_VAULTS=Dev                        # Usually set per project in .envrc. Can only narrow OP_ENV_ALLOWED_VAULTS.
 source /path/to/zsh-op-env/op-env.plugin.zsh
 ```
 
@@ -421,6 +430,23 @@ come back intact.
   `OP_ENV_ALLOWED_VAULTS` in `~/.zshrc` to the vaults your projects actually
   use to limit what such a reference can reach. `OP_ENV_VAULTS` alone does not
   protect you here: the same `.env` file can set it too.
+- **Set `OP_ENV_ALLOWED_VAULTS` with a plain assignment in `~/.zshrc`.** The
+  same `.env` file can also export `OP_ENV_ALLOWED_VAULTS`. The current shell
+  ignores it, but a nested shell (running `zsh`, a new tmux pane, an editor
+  terminal opened from the project) loads the plugin again and reads whatever
+  value it inherited. A plain `OP_ENV_ALLOWED_VAULTS=...` before `source` in
+  `~/.zshrc` overwrites the inherited value. The inherited value wins if you
+  set it only in `~/.zprofile` or `~/.zlogin` (skipped by non-login shells),
+  with `${OP_ENV_ALLOWED_VAULTS:=...}`, or only in the environment your
+  terminal starts with.
+- **Code running as your user is out of scope.** `OP_ENV_ALLOWED_VAULTS`
+  limits what references in project files can reach. It does not stop a
+  program that can run code as you: such a program can edit `~/.zshrc` and
+  open a new shell, or skip the plugin and call `op read` itself. An allowed
+  `.envrc` is shell code and has the same power, which is what
+  `direnv allow` guards. To limit what that kind of code can read, restrict
+  access in 1Password itself, for example with a separate account or a
+  service account scoped to specific vaults.
 - References containing `{`, `}`, `$` or a control character are refused and
   never sent to `op`, which would read them as template syntax: otherwise
   `op://Dev/a/x }}{{ op://Private/bank/password` would pass the vault checks
