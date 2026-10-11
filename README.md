@@ -105,7 +105,7 @@ ignored.
 
 Set the ceiling once, then let each project narrow it:
 
-```zsh
+```bash
 # ~/.zshrc
 OP_ENV_ALLOWED_VAULTS=Work,Personal-Dev
 source /path/to/zsh-op-env/op-env.plugin.zsh
@@ -159,6 +159,152 @@ example Docker Compose `env_file:`), get the `op://` text.
 
 Changes to `.env` do not need a new `direnv allow`, so set
 `OP_ENV_ALLOWED_VAULTS` (see [Security notes](#security-notes)).
+
+## Examples
+
+Each example is an `.envrc` or `.env` file and what the shell ends up with.
+See also [Per-project vaults](#per-project-vaults) and
+[`.env` files](#env-files).
+
+### Secrets next to plain config
+
+Only values that are `op://` references or contain `{{ op://... }}` tags are
+touched. Everything else passes through unchanged.
+
+```bash
+# .env
+LOG_LEVEL=debug
+PORT=3000
+DB_PASSWORD=op://Dev/db/password
+```
+
+`LOG_LEVEL` and `PORT` stay as written; `DB_PASSWORD` holds the secret.
+
+### Fields inside sections
+
+A reference can name a section as well as a field, the same as with `op read`:
+
+```bash
+# .envrc
+export AWS_ACCESS_KEY_ID=op://Dev/aws/production/access-key-id
+export AWS_SECRET_ACCESS_KEY=op://Dev/aws/production/secret-access-key
+```
+
+### Values built from secrets
+
+```bash
+# .envrc
+export API_AUTH='Bearer {{ op://Dev/api/token }}'
+export REDIS_URL='redis://:{{ op://Dev/redis/password }}@localhost:6379/0'
+export DATABASE_URL='postgres://{{ op://Dev/db/user }}:{{ op://Dev/db/password }}@db/app'
+```
+
+See [References inside a value](#references-inside-a-value) for the rules.
+
+### Multiline secrets
+
+PEM keys, certificates and JSON blobs come back byte-for-byte:
+
+```bash
+# .envrc
+export TLS_KEY=op://Dev/tls/key.pem
+export GCP_CREDENTIALS_JSON=op://Dev/gcp-service-account/credential
+```
+
+### Several `.env` files
+
+direnv loads them in order, so a later file overrides an earlier one. Either
+file may use references:
+
+```bash
+# .envrc
+dotenv_if_exists .env
+dotenv_if_exists .env.local
+```
+
+```bash
+# .env.local, untracked, for one developer's own credentials
+DB_PASSWORD=op://Personal-Dev/db/password
+```
+
+### Monorepo with shared secrets
+
+Put shared references in the root `.envrc` and pull them into each package
+with direnv's `source_up`:
+
+```bash
+# ~/mono/.envrc
+export OP_ENV_VAULTS=Dev
+export AWS_ACCESS_KEY_ID=op://Dev/aws/production/access-key-id
+```
+
+```bash
+# ~/mono/packages/api/.envrc
+source_up
+dotenv_if_exists .env
+export TLS_KEY=op://Dev/tls/key.pem
+```
+
+In `packages/api`, the shared and package-specific references are resolved
+together, in one `op inject` call.
+
+### Passing secrets to Docker
+
+Values are ordinary environment variables, so name them without a value to
+pass them through:
+
+```bash
+docker run --rm -e DATABASE_URL -e API_AUTH my-image
+```
+
+```yaml
+# compose.yaml
+services:
+  api:
+    environment:
+      - DATABASE_URL
+      - API_AUTH
+```
+
+Do not point Compose's `env_file:` at a `.env` of references: it passes the
+file's `op://` text, not the resolved values.
+
+### Without direnv
+
+References exported from `.zshenv` or `.zprofile` are resolved before the
+first command:
+
+```zsh
+# ~/.zshenv
+export GITHUB_TOKEN=op://Personal/github/token
+```
+
+To resolve a reference you export by hand, run `op-env-resolve`, or set
+`OP_ENV_HOOK=always` so every command line is scanned:
+
+```zsh
+export OPENAI_API_KEY=op://Personal/openai/key
+op-env-resolve
+```
+
+### After a secret changes in 1Password
+
+Resolved values are cached for the life of the shell. To pick up a rotated
+secret, drop the cache and have direnv export the references again:
+
+```zsh
+op-env-flush && direnv reload
+```
+
+The next command line sees the new value.
+
+### Signed out, or a reference that will not resolve
+
+```zsh
+op signin
+op-env-resolve           # retries now instead of waiting for the next cd
+op-env-resolve --debug   # shows which path each reference took, never values
+```
 
 ## How it works
 
