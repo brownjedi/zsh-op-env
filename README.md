@@ -317,10 +317,11 @@ values.
 By default the scan runs before the first command and then only when
 `$DIRENV_DIFF` changes, which direnv does whenever it loads, reloads or unloads
 an `.envrc`. Resolving a variable in place does not change `$DIRENV_DIFF`, so
-on a normal command the hook does a single string comparison. One extra check
-covers `cd .. && cd -` in a single command line, where direnv unloads and
-reloads and ends with the same diff: if a variable the plugin resolved holds
-its reference again, the scan runs anyway. With `OP_ENV_HOOK=always` the scan
+on a normal command the hook compares `$DIRENV_DIFF` and checks only the
+variables the plugin resolved, not the whole environment. That check covers
+`cd .. && cd -` in a single command line, where direnv unloads and reloads and
+ends with the same diff: if a variable the plugin resolved holds its reference
+again, the scan runs anyway. With `OP_ENV_HOOK=always` the scan
 runs before every command; it skips values the plugin set itself, so once
 everything is resolved no `op` call is made.
 
