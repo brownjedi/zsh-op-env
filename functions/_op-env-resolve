@@ -161,8 +161,8 @@ if (( $#_oe_refs )); then
         _oe_err=$(<$_oe_tmp)
         _oe_why[$_oe_ref]=${_oe_err:-$_oe_why[$_oe_ref]}
         _op-env-dbg "  $_oe_ref FAILED: $_oe_why[$_oe_ref]"
-        # Anything but a per-ref error (signed out, prompt dismissed) would repeat, and re-prompt, for every ref.
-        if (( _oe_st > 128 )) || [[ $_oe_err != (#i)*(isn?t a|invalid secret reference|more than one|could not find)* ]]; then
+        # op 2.39's per-ref errors. Anything else (signed out, prompt dismissed) would repeat, and re-prompt, for every ref.
+        if (( _oe_st > 128 )) || [[ $_oe_err != (#i)*(isn?t a|invalid secret reference|more than one|could not find (item|field)|no item matched|does not have a field|not in an active state)* ]]; then
             _oe_abort="skipped after $_oe_ref failed: ${_oe_why[$_oe_ref]%%$'\n'*}"
         fi
     done

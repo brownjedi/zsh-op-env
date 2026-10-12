@@ -98,6 +98,38 @@ test_bad_ref_does_not_block_others() {
     assert_not_contains $err GOOD
 }
 
+test_per_ref_read_errors_do_not_stop_other_reads() {
+    export FAKE_OP_INJECT=fail A=op://Dev/a/x B=op://Dev/b/x
+    # op 2.39's wording for a reference that is wrong on its own.
+    local -a errors=(
+        '"x" isn'\''t an item. Specify the item with its UUID, name, or domain.'
+        '"f" isn'\''t a field in the "x" item'
+        '"V" isn'\''t a vault in this account. Specify the vault with its UUID or name.'
+        "invalid secret reference 'op://Dev/a': too few segments"
+        'More than one item matches "x". Try again and specify the item by its ID'
+        'could not find item x in vault Dev'
+        'could not find field or file f in section s on item x in vault Dev'
+        'no item matched the secret reference query'
+        "item 'Dev/x' does not have a field 'f'"
+        'item is not in an active state'
+    )
+    local e
+    for e in $errors; do
+        clear_calls
+        FAKE_OP_READ_ERROR=$e run op-env-resolve
+        assert_status 1
+        assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x' 'read op://Dev/b/x'
+    done
+}
+
+test_session_read_error_stops_after_first_read() {
+    export FAKE_OP_INJECT=fail FAKE_OP_READ_ERROR='could not find session token for account x' \
+        A=op://Dev/a/x B=op://Dev/b/x
+    run op-env-resolve
+    assert_status 1
+    assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x'
+}
+
 test_signed_out_stops_after_first_read() {
     export FAKE_OP_INJECT=signed-out FAKE_OP_READ=signed-out
     secret op://Dev/a/x one
