@@ -94,80 +94,86 @@ else
 fi
 
 if (( $#_oe_refs )); then
-    (( $+commands[op] )) || _oe_abort='`op` not found in PATH'
-    _oe_tmp=$(mktemp) || return 1
+    if (( $+commands[op] )); then
+        _oe_tmp=$(mktemp "${TMPDIR:-/tmp}/op-env.XXXXXX") || return 1
+    else
+        _oe_abort='`op` not found in PATH'
+    fi
+    {
+        # --- fast path: one `op inject` call for the whole batch --------------------
 
-    # --- fast path: one `op inject` call for the whole batch --------------------
+        if [[ -z $_oe_abort ]]; then
+            # Random delimiter lines, not NAME=value, so values with "=", newlines or trailing blank lines survive.
+            local _oe_nl=$'\n' _oe_sep="__op_env_sep_${RANDOM}${RANDOM}__" _oe_template=''
+            for (( _oe_idx = 1; _oe_idx <= $#_oe_refs; _oe_idx++ )); do
+                _oe_template+="${_oe_idx}${_oe_nl}{{ $_oe_refs[_oe_idx] }}${_oe_nl}${_oe_sep}${_oe_nl}"
+            done
 
-    if [[ -z $_oe_abort ]]; then
-        # Random delimiter lines, not NAME=value, so values with "=", newlines or trailing blank lines survive.
-        local _oe_nl=$'\n' _oe_sep="__op_env_sep_${RANDOM}${RANDOM}__" _oe_template=''
-        for (( _oe_idx = 1; _oe_idx <= $#_oe_refs; _oe_idx++ )); do
-            _oe_template+="${_oe_idx}${_oe_nl}{{ $_oe_refs[_oe_idx] }}${_oe_nl}${_oe_sep}${_oe_nl}"
-        done
+            _oe_out=$(print -rn -- $_oe_template | op inject 2>$_oe_tmp)
+            _oe_st=$?
+            _oe_injecterr=$(<$_oe_tmp)
+            _op-env-dbg "op inject exited $_oe_st, ${#_oe_out} bytes out, ${#_oe_injecterr} bytes stderr"
 
-        _oe_out=$(print -rn -- $_oe_template | op inject 2>$_oe_tmp)
-        _oe_st=$?
-        _oe_injecterr=$(<$_oe_tmp)
-        _op-env-dbg "op inject exited $_oe_st, ${#_oe_out} bytes out, ${#_oe_injecterr} bytes stderr"
-
-        if (( _oe_st == 0 )); then
-            # Line walk, not (s) split: (s) cannot split on a multi-line delimiter, and (@f) keeps empty lines.
-            _oe_idx=0
-            for _oe_line in "${(@f)_oe_out}"; do
-                if (( ! _oe_idx )); then
-                    [[ $_oe_line == <1-> ]] && _oe_idx=$_oe_line
-                    _oe_acc=()
-                    continue
-                fi
-                if [[ $_oe_line == "$_oe_sep" ]]; then
-                    _oe_value=${(pj:\n:)_oe_acc}
-                    _oe_ref=$_oe_refs[_oe_idx]
-                    _oe_idx=0
-                    [[ -n $_oe_ref ]] || continue
-                    # op passes unresolvable templates through; compare to this ref so a secret containing "op://" is kept.
-                    if [[ $_oe_value == ('{{'*$_oe_ref*'}}'|$_oe_ref) ]]; then
-                        _oe_why[$_oe_ref]='op inject left the template unresolved'
+            if (( _oe_st == 0 )); then
+                # Line walk, not (s) split: (s) cannot split on a multi-line delimiter, and (@f) keeps empty lines.
+                _oe_idx=0
+                for _oe_line in "${(@f)_oe_out}"; do
+                    if (( ! _oe_idx )); then
+                        [[ $_oe_line == <1-> ]] && _oe_idx=$_oe_line
+                        _oe_acc=()
                         continue
                     fi
-                    _oe_got[$_oe_ref]=$_oe_value
-                    _op-env-dbg "  $_oe_ref <- ${#_oe_value} bytes via inject"
-                    continue
-                fi
-                _oe_acc+=("$_oe_line")
-            done
-        elif (( _oe_st > 128 )); then
-            _oe_abort="op inject interrupted (exit $_oe_st)"
+                    if [[ $_oe_line == "$_oe_sep" ]]; then
+                        _oe_value=${(pj:\n:)_oe_acc}
+                        _oe_ref=$_oe_refs[_oe_idx]
+                        _oe_idx=0
+                        [[ -n $_oe_ref ]] || continue
+                        # op passes unresolvable templates through; compare to this ref so a secret containing "op://" is kept.
+                        if [[ $_oe_value == ('{{'*$_oe_ref*'}}'|$_oe_ref) ]]; then
+                            _oe_why[$_oe_ref]='op inject left the template unresolved'
+                            continue
+                        fi
+                        _oe_got[$_oe_ref]=$_oe_value
+                        _op-env-dbg "  $_oe_ref <- ${#_oe_value} bytes via inject"
+                        continue
+                    fi
+                    _oe_acc+=("$_oe_line")
+                done
+            elif (( _oe_st > 128 )); then
+                _oe_abort="op inject interrupted (exit $_oe_st)"
+            fi
         fi
-    fi
 
-    # --- slow path: whatever the batch did not produce -------------------------
+        # --- slow path: whatever the batch did not produce -------------------------
 
-    # One ref at a time, so a single bad ref cannot hold the rest hostage and the error names it.
-    for _oe_ref in $_oe_refs; do
-        (( $+_oe_got[$_oe_ref] )) && continue
-        if [[ -n $_oe_abort ]]; then
-            _oe_why[$_oe_ref]=$_oe_abort
-            continue
-        fi
-        [[ -n ${_oe_why[$_oe_ref]:-} ]] || _oe_why[$_oe_ref]='missing from the op inject output'
-        # Trailing x stops $(...) from stripping the secret's own trailing newlines.
-        _oe_value=$(op read --no-newline -- $_oe_ref 2>$_oe_tmp && print -n x)
-        _oe_st=$?
-        if (( _oe_st == 0 )); then
-            _oe_got[$_oe_ref]=${_oe_value%x}
-            _op-env-dbg "  $_oe_ref <- ${#_oe_got[$_oe_ref]} bytes via op read (inject said: $_oe_why[$_oe_ref])"
-            continue
-        fi
-        _oe_err=$(<$_oe_tmp)
-        _oe_why[$_oe_ref]=${_oe_err:-$_oe_why[$_oe_ref]}
-        _op-env-dbg "  $_oe_ref FAILED: $_oe_why[$_oe_ref]"
-        # op 2.39's per-ref errors. Anything else (signed out, prompt dismissed) would repeat, and re-prompt, for every ref.
-        if (( _oe_st > 128 )) || [[ $_oe_err != (#i)*(isn?t a|invalid secret reference|more than one|could not find (item|field)|no item matched|does not have a field|not in an active state)* ]]; then
-            _oe_abort="skipped after $_oe_ref failed: ${_oe_why[$_oe_ref]%%$'\n'*}"
-        fi
-    done
-    rm -f -- $_oe_tmp
+        # One ref at a time, so a single bad ref cannot hold the rest hostage and the error names it.
+        for _oe_ref in $_oe_refs; do
+            (( $+_oe_got[$_oe_ref] )) && continue
+            if [[ -n $_oe_abort ]]; then
+                _oe_why[$_oe_ref]=$_oe_abort
+                continue
+            fi
+            [[ -n ${_oe_why[$_oe_ref]:-} ]] || _oe_why[$_oe_ref]='missing from the op inject output'
+            # Trailing x stops $(...) from stripping the secret's own trailing newlines.
+            _oe_value=$(op read --no-newline -- $_oe_ref 2>$_oe_tmp && print -n x)
+            _oe_st=$?
+            if (( _oe_st == 0 )); then
+                _oe_got[$_oe_ref]=${_oe_value%x}
+                _op-env-dbg "  $_oe_ref <- ${#_oe_got[$_oe_ref]} bytes via op read (inject said: $_oe_why[$_oe_ref])"
+                continue
+            fi
+            _oe_err=$(<$_oe_tmp)
+            _oe_why[$_oe_ref]=${_oe_err:-$_oe_why[$_oe_ref]}
+            _op-env-dbg "  $_oe_ref FAILED: $_oe_why[$_oe_ref]"
+            # op 2.39's per-ref errors. Anything else (signed out, prompt dismissed) would repeat, and re-prompt, for every ref.
+            if (( _oe_st > 128 )) || [[ $_oe_err != (#i)*(isn?t a|invalid secret reference|more than one|could not find (item|field)|no item matched|does not have a field|not in an active state)* ]]; then
+                _oe_abort="skipped after $_oe_ref failed: ${_oe_why[$_oe_ref]%%$'\n'*}"
+            fi
+        done
+    } always {
+        # Ctrl-C skips the rest of the function, but not this.
+        [[ -n $_oe_tmp ]] && rm -f -- $_oe_tmp
+    }
 fi
 
 # All or nothing per variable, and one pass over the parts, so a substituted secret is never read as a template.

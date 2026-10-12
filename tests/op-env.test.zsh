@@ -666,6 +666,13 @@ interactive_zsh() {
     PS1= zsh -fi +Z +o prompt_cr +o prompt_sp 2>/dev/null
 }
 
+test_ctrl_c_removes_temp_file() {
+    mkdir $T/tmp
+    export TMPDIR=$T/tmp FAKE_OP_INJECT=sigint A=op://Dev/a/x
+    print -r -- "source ${(qq)ROOT}/op-env.plugin.zsh; FAKE_OP_SHELL=\$\$ op-env-resolve" | interactive_zsh
+    assert_eq '' "$(print -r -- $T/tmp/*(DN))" 'temp files'
+}
+
 test_hook_only_in_interactive_shells() {
     assert_eq '' "${preexec_functions[(r)_op-env-preexec]}" 'preexec hook when non-interactive'
     local src="source ${(qq)ROOT}/op-env.plugin.zsh; source ${(qq)ROOT}/op-env.plugin.zsh"
