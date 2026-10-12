@@ -22,17 +22,18 @@ for _oe_name in ${(k)parameters[(R)scalar*export*]}; do
     # A value this plugin set is a secret, not a ref, even if it holds op:// text.
     (( $+_OP_ENV_RESOLVED[$_oe_name] )) && [[ $_oe_value == "$_OP_ENV_RESOLVED[$_oe_name]" ]] && continue
     _oe_parts=() _oe_lit='' _oe_rest=$_oe_value _oe_nested=0
+    # op inject rejects a tag inside a tag; resolving just the inner one would leave a template that never resolves.
+    while [[ $_oe_rest == *'{{'[[:blank:]]#op://* ]]; do
+        _oe_rest=${_oe_rest#*'{{'[[:blank:]]#op://}
+        [[ ${_oe_rest%%'}}'*} == *'{{'* ]] && { _oe_nested=1; break }
+    done
+    _oe_rest=$_oe_value
     # Innermost {{ }} pairs only; anything that is not a {{ op://... }} tag stays literal text.
-    while [[ $_oe_rest == *'}}'* ]]; do
+    while (( ! _oe_nested )) && [[ $_oe_rest == *'}}'* ]]; do
         _oe_head=${_oe_rest%%'}}'*}
         _oe_rest=${_oe_rest#*'}}'}
         _oe_ref=${${${_oe_head##*'{{'}##[[:blank:]]#}%%[[:blank:]]#}
         if [[ $_oe_head == *'{{'* && $_oe_ref == op://?* ]]; then
-            # op inject rejects a tag inside a tag; resolving just the inner one would leave a template that never resolves.
-            if [[ ${_oe_head%'{{'*} == *'{{'[[:blank:]]#op://* ]]; then
-                _oe_nested=1
-                break
-            fi
             _oe_parts+=("$_oe_lit${_oe_head%'{{'*}" "$_oe_ref")
             _oe_lit=''
         else

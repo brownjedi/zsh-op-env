@@ -382,6 +382,24 @@ test_resolves_tags_inside_a_value() {
     assert_calls 'inject op://Dev/db/host op://Dev/db/user op://Dev/db/pass'
 }
 
+test_tag_wrapping_another_tag_is_refused() {
+    secret op://Dev/a/x one
+    local -a tmpls=(
+        'x={{ op://Dev/{{ x }}/f }}'
+        'x={{ op://Dev/a/x {{ }}'
+        '{{ op://Dev/a/x {{ op://Dev/a/x }}'
+    )
+    export A=$tmpls[1] B=$tmpls[2] C=$tmpls[3]
+    run op-env-resolve
+    assert_status 1
+    assert_eq $tmpls[1] $A
+    assert_eq $tmpls[2] $B
+    assert_eq $tmpls[3] $C
+    assert_calls
+    assert_contains "$(<$T/err)" 'could not resolve A, B, C'
+    assert_contains "$(<$T/err)" 'nested {{ }} tags are not supported'
+}
+
 test_text_outside_tags_is_kept_verbatim() {
     secret op://Dev/a/x one
     local tmpl='op://Private/b/c }} {{ op://Dev/a/x }} {{ not a ref }} {{op:// }} $HOME {{ op://Dev/a/x }}'
