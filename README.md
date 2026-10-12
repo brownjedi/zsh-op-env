@@ -346,9 +346,13 @@ export API_ADDR='{{ op://Dev/api/host }}:8443'
 export DATABASE_URL='postgres://{{ op://Dev/db/user }}:{{ op://Dev/db/password }}@db/app'
 ```
 
-`export B="$A:8080"` does not work: the shell expands `$A` while it still holds
-the reference, so `B` becomes `op://...:8080`, which names a different field.
-Write `export B="{{ $A }}:8080"` instead.
+In an `.envrc`, `export B="$A:8080"` does not work: the shell expands `$A`
+while it still holds the reference, so `B` becomes `op://...:8080`, which
+names a different field. Write `export B="{{ $A }}:8080"` instead. Only do
+this where `$A` still holds the reference: once `A` is resolved, as in your
+interactive shell, `{{ $A }}` wraps the secret itself, which is not a
+reference, so `B` keeps the literal braces. There, `export B="$A:8080"` is
+right.
 
 - Each tag's reference gets the same vault checks, batch and cache as a
   whole-value reference.
