@@ -87,19 +87,19 @@ plugins=(... direnv op-env)
 
 ## Configuration
 
-| Variable                    | Effect                                                                                                                                                                                                                    |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OP_ENV_ALLOWED_VAULTS=Dev` | The most any project may use. Read once, when the plugin loads, so set it _before_ loading. `OP_ENV_VAULTS` can only narrow it. Unset means any vault.                                                                    |
-| `OP_ENV_DEBUG=1`            | Trace every pass, including the hook-driven ones.                                                                                                                                                                         |
-| `OP_ENV_HOOK=direnv`        | Default. Resolve before the first command, then only when direnv loads, reloads or unloads an `.envrc` (`$DIRENV_DIFF` changes).                                                                                          |
-| `OP_ENV_HOOK=always`        | Scan before every command, so references exported any other way (by hand, by another plugin) are resolved too.                                                                                                            |
-| `OP_ENV_HOOK=off`           | Don't install the preexec hook; call `op-env-resolve` yourself. Set it _before_ loading.                                                                                                                                  |
-| `OP_ENV_NO_CACHE=1`         | Ask `op` every pass instead of caching values in memory.                                                                                                                                                                  |
-| `OP_ENV_VAULTS=Dev`         | Only resolve references into these vaults. Others are refused with a warning and never sent to `op`. Read on every pass, so a project can set it in its `.envrc`. Unset means every vault `OP_ENV_ALLOWED_VAULTS` allows. |
+| Variable                    | Effect                                                                                                                                                                                                                             |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OP_ENV_ALLOWED_VAULTS=Dev` | The most any project may use. Read once, when the plugin loads, so set it _before_ loading. `OP_ENV_VAULTS` can only narrow it. Unset or empty means any vault.                                                                    |
+| `OP_ENV_DEBUG=1`            | Trace every pass, including the hook-driven ones.                                                                                                                                                                                  |
+| `OP_ENV_HOOK=direnv`        | Default. Resolve before the first command, then only when direnv loads, reloads or unloads an `.envrc` (`$DIRENV_DIFF` changes).                                                                                                   |
+| `OP_ENV_HOOK=always`        | Scan before every command, so references exported any other way (by hand, by another plugin) are resolved too.                                                                                                                     |
+| `OP_ENV_HOOK=off`           | Don't install the preexec hook; call `op-env-resolve` yourself. Set it _before_ loading.                                                                                                                                           |
+| `OP_ENV_NO_CACHE=1`         | Ask `op` every pass instead of caching values in memory.                                                                                                                                                                           |
+| `OP_ENV_VAULTS=Dev`         | Only resolve references into these vaults. Others are refused with a warning and never sent to `op`. Read on every pass, so a project can set it in its `.envrc`. Unset or empty means every vault `OP_ENV_ALLOWED_VAULTS` allows. |
 
 Both vault lists are comma-separated and matched exactly against the vault
 part of the reference (name or ID, case-sensitive). Spaces around entries are
-ignored.
+ignored. A value that names no vault, such as `,`, refuses every reference.
 
 ### Per-project vaults
 

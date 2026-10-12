@@ -281,6 +281,24 @@ test_vault_allowlist_is_exact_and_case_sensitive() {
     assert_calls
 }
 
+test_vault_allowlist_naming_no_vault_refuses_every_ref() {
+    secret op://Dev/a/x dev
+    export OP_ENV_VAULTS=' , ' A=op://Dev/a/x
+    run op-env-resolve
+    assert_status 1
+    assert_eq op://Dev/a/x $A
+    assert_contains "$(<$T/err)" 'vault "Dev" is not in OP_ENV_VAULTS'
+    assert_calls
+}
+
+test_empty_vault_allowlist_means_any_vault() {
+    secret op://Dev/a/x dev
+    export OP_ENV_VAULTS= A=op://Dev/a/x
+    run op-env-resolve
+    assert_status 0
+    assert_eq dev $A
+}
+
 test_vault_allowlist_applies_to_cached_values() {
     secret op://Dev/a/x one
     export A=op://Dev/a/x
@@ -485,6 +503,15 @@ test_allowed_vaults_apply_when_project_sets_none() {
     export A=op://Dev/a/x B=op://Staging/a/x
     local out=$(allowed_zsh Dev 'op-env-resolve 2>/dev/null; print -r -- "A=$A B=$B"')
     assert_eq 'A=dev B=op://Staging/a/x' $out
+}
+
+test_allowed_vaults_naming_no_vault_refuses_every_ref() {
+    secret op://Dev/a/x dev
+    export A=op://Dev/a/x
+    local out=$(allowed_zsh , 'op-env-resolve; print -r -- "st=$? A=$A"' 2>$T/err)
+    assert_eq 'st=1 A=op://Dev/a/x' $out
+    assert_contains "$(<$T/err)" 'vault "Dev" is not in OP_ENV_ALLOWED_VAULTS'
+    assert_calls
 }
 
 test_allowed_vaults_ignore_changes_after_load() {
