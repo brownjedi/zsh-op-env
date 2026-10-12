@@ -18,9 +18,9 @@ local -aU _oe_cand _oe_refs
 for _oe_name in ${(k)parameters[(R)scalar*export*]}; do
     [[ $_oe_name == [A-Za-z_][A-Za-z0-9_]# ]]     || continue
     [[ ${parameters[$_oe_name]} == *readonly* ]] && continue
-    _oe_value=${(P)_oe_name}
     # A value this plugin set is a secret, not a ref, even if it holds op:// text.
-    (( $+_OP_ENV_RESOLVED[$_oe_name] )) && [[ $_oe_value == "$_OP_ENV_RESOLVED[$_oe_name]" ]] && continue
+    _op-env-candidate $_oe_name || continue
+    _oe_value=${(P)_oe_name}
     _oe_parts=() _oe_lit='' _oe_rest=$_oe_value _oe_nested=0
     # op inject rejects a tag inside a tag; resolving just the inner one would leave a template that never resolves.
     while [[ $_oe_rest == *'{{'[[:blank:]]#op://* ]]; do

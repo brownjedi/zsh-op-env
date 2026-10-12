@@ -1,0 +1,5 @@
+# _op-env-candidate NAME: NAME may hold op:// references, and its value is not one this plugin set.
+emulate -L zsh
+setopt local_options no_xtrace no_verbose
+(( $+_OP_ENV_RESOLVED[$1] )) && [[ ${(P)1-} == "$_OP_ENV_RESOLVED[$1]" ]] && return 1
+[[ ${(P)1-} == (op://?*|*'{{'*'}}'*) ]]

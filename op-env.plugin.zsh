@@ -9,7 +9,7 @@ typeset -g _OP_ENV_LOADED=1
 typeset -g OP_ENV_HOME="${0:A:h}"
 
 fpath+=("$OP_ENV_HOME/functions")
-autoload -Uz op-env-resolve op-env-flush _op-env-resolve _op-env-preexec _op-env-dbg _op-env-split-vaults
+autoload -Uz op-env-resolve op-env-flush _op-env-resolve _op-env-preexec _op-env-dbg _op-env-split-vaults _op-env-candidate
 
 # ref -> resolved value, for this shell only. Never written to disk.
 typeset -gA _OP_ENV_CACHE
