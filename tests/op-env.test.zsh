@@ -409,6 +409,50 @@ test_resolved_secret_holding_refs_is_not_resolved_again() {
     assert_calls 'inject op://Dev/a/x op://Dev/b/x'
 }
 
+nested_zsh() {
+    zsh -f -c "source ${(qq)ROOT}/op-env.plugin.zsh; $1"
+}
+
+test_nested_shell_does_not_resolve_inherited_secrets() {
+    secret op://Dev/a/x 'tok-{{ op://Dev/c/x }}'
+    secret op://Dev/b/x op://Dev/c/x
+    secret op://Dev/c/x other-secret
+    export A=op://Dev/a/x B=op://Dev/b/x
+    run op-env-resolve
+    clear_calls
+    assert_eq 'st=0 A=tok-{{ op://Dev/c/x }} B=op://Dev/c/x' \
+        "$(nested_zsh 'op-env-resolve; print -r -- "st=$? A=$A B=$B"')"
+    assert_calls
+}
+
+test_nested_shell_resolves_refs_exported_after_the_last_pass() {
+    secret op://Dev/a/x one
+    secret op://Dev/b/x two
+    export A=op://Dev/a/x
+    run op-env-resolve
+    # Typed on the same line as `zsh`, so no pass ran in between.
+    export A=op://Dev/b/x
+    assert_eq A=two "$(nested_zsh 'op-env-resolve; print -r -- "A=$A"')"
+}
+
+test_nested_shell_resolves_refs_the_parent_could_not() {
+    secret op://Dev/a/x one
+    export A=op://Dev/a/x
+    run op-env-resolve
+    export A=op://Dev/b/x
+    run op-env-resolve
+    assert_status 1
+    secret op://Dev/b/x two
+    assert_eq A=two "$(nested_zsh 'op-env-resolve; print -r -- "A=$A"')"
+}
+
+test_nested_shell_ignores_unsafe_inherited_names() {
+    secret op://Dev/a/x one
+    export A=op://Dev/a/x _OP_ENV_RESOLVED_VARS="A:13 B[\$(touch $T/pwned)]:1"
+    assert_eq A=one "$(nested_zsh 'op-env-resolve; print -r -- "A=$A"')"
+    [[ ! -e $T/pwned ]] || fail 'inherited name was evaluated'
+}
+
 test_direnv_hook_catches_template_reload_within_one_command() {
     secret op://Dev/a/x one
     export DIRENV_DIFF=d1 A='{{ op://Dev/a/x }}:8080'

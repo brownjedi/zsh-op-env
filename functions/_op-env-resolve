@@ -12,7 +12,7 @@ local _oe_rest _oe_head _oe_lit
 local -i _oe_st _oe_idx _oe_nested
 # _oe_partsof: name -> NUL-joined (text ref text ref ... text). A whole-value ref is ('' ref '').
 local -A _oe_valof _oe_partsof _oe_got _oe_why
-local -a _oe_failed _oe_shout _oe_acc _oe_lines _oe_vaults _oe_parts
+local -a _oe_failed _oe_shout _oe_acc _oe_lines _oe_vaults _oe_parts _oe_set
 local -aU _oe_cand _oe_refs
 
 for _oe_name in ${(k)parameters[(R)scalar*export*]}; do
@@ -184,6 +184,15 @@ for _oe_name in ${(ko)_oe_partsof}; do
     typeset -gx "$_oe_name=$_oe_value"
     _OP_ENV_RESOLVED[$_oe_name]=$_oe_value
 done
+# Names and lengths, never values: enough for a nested shell to tell an inherited secret from a ref.
+for _oe_name in ${(ok)_OP_ENV_RESOLVED}; do
+    [[ ${(P)_oe_name-} == "$_OP_ENV_RESOLVED[$_oe_name]" ]] && _oe_set+=("$_oe_name:${#_OP_ENV_RESOLVED[$_oe_name]}")
+done
+if (( $#_oe_set )); then
+    typeset -gx _OP_ENV_RESOLVED_VARS="$_oe_set"
+else
+    unset _OP_ENV_RESOLVED_VARS
+fi
 for _oe_ref in ${(k)_oe_got}; do
     [[ -n ${OP_ENV_NO_CACHE:-} ]] || _OP_ENV_CACHE[$_oe_ref]=$_oe_got[$_oe_ref]
     unset "_OP_ENV_WARNED[$_oe_ref]"

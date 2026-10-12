@@ -420,7 +420,10 @@ come back intact.
   and still resolve the `Private` secret.
 - A value the plugin set is never treated as a reference again, even if the
   secret itself contains `op://` text or `{{ }}` tags, so a secret cannot make
-  the plugin read another secret.
+  the plugin read another secret. This holds in nested shells too: the plugin
+  exports `_OP_ENV_RESOLVED_VARS`, the names and lengths (never the values) of
+  the variables it set, and a nested shell that loads the plugin skips
+  inherited values that still match.
 
 ## Compared with 1Password Environments
 
