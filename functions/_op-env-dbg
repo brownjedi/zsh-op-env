@@ -1,3 +1,3 @@
-# Trace helper. Silent unless OP_ENV_DEBUG is set. Never prints secret values.
+# Silent unless OP_ENV_DEBUG is set. Prints its arguments as given, so callers must never pass a secret value.
 [[ -n ${OP_ENV_DEBUG:-} ]] && print -ru2 -- "op-env: $*"
 return 0
