@@ -1,0 +1,6 @@
+# _op-env-candidate NAME: NAME may hold op:// references, and its value is not one this plugin set.
+emulate -L zsh -o extended_glob
+setopt local_options no_xtrace no_verbose
+(( $+_OP_ENV_RESOLVED[$1] )) && [[ ${(P)1-} == "$_OP_ENV_RESOLVED[$1]" ]] && return 1
+# Same test as the resolver's parser, so the hook never wakes for text the resolver would skip.
+[[ ${(P)1-} == (op://?*|*'{{'[[:blank:]]#op://*) ]]

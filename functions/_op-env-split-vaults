@@ -5,4 +5,6 @@ local -a _oe_list
 for _oe_vault in ${(s:,:)2}; do
     _oe_list+=(${${_oe_vault##[[:space:]]#}%%[[:space:]]#})
 done
+# A set value naming no vault must refuse every ref, not mean "any vault". No vault part of a ref contains "/".
+[[ -n $2 ]] && (( ! $#_oe_list )) && _oe_list=(/)
 set -A $1 $_oe_list

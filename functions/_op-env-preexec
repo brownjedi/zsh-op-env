@@ -9,10 +9,9 @@ case ${OP_ENV_HOOK:-direnv} in
     *)
         if (( ${+_OP_ENV_LAST_DIFF} )) && [[ ${DIRENV_DIFF:-} == $_OP_ENV_LAST_DIFF ]]; then
             # Same diff can still mean refs are back: direnv unloaded and reloaded inside one command (cd .. && cd -).
-            local _oe_name _oe_value _oe_back=''
+            local _oe_name _oe_back=''
             for _oe_name in ${(k)_OP_ENV_RESOLVED}; do
-                _oe_value=${(P)_oe_name:-}
-                [[ $_oe_value != "$_OP_ENV_RESOLVED[$_oe_name]" && $_oe_value == (op://?*|*'{{'*'}}'*) ]] && { _oe_back=1; break }
+                _op-env-candidate $_oe_name && { _oe_back=1; break }
             done
             [[ -n $_oe_back ]] || return 0
         fi

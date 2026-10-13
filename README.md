@@ -87,19 +87,19 @@ plugins=(... direnv op-env)
 
 ## Configuration
 
-| Variable                    | Effect                                                                                                                                                                                                                    |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OP_ENV_ALLOWED_VAULTS=Dev` | The most any project may use. Read once, when the plugin loads, so set it _before_ loading. `OP_ENV_VAULTS` can only narrow it. Unset means any vault.                                                                    |
-| `OP_ENV_DEBUG=1`            | Trace every pass, including the hook-driven ones.                                                                                                                                                                         |
-| `OP_ENV_HOOK=direnv`        | Default. Resolve before the first command, then only when direnv loads, reloads or unloads an `.envrc` (`$DIRENV_DIFF` changes).                                                                                          |
-| `OP_ENV_HOOK=always`        | Scan before every command, so references exported any other way (by hand, by another plugin) are resolved too.                                                                                                            |
-| `OP_ENV_HOOK=off`           | Don't install the preexec hook; call `op-env-resolve` yourself. Set it _before_ loading.                                                                                                                                  |
-| `OP_ENV_NO_CACHE=1`         | Ask `op` every pass instead of caching values in memory.                                                                                                                                                                  |
-| `OP_ENV_VAULTS=Dev`         | Only resolve references into these vaults. Others are refused with a warning and never sent to `op`. Read on every pass, so a project can set it in its `.envrc`. Unset means every vault `OP_ENV_ALLOWED_VAULTS` allows. |
+| Variable                    | Effect                                                                                                                                                                                                                             |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OP_ENV_ALLOWED_VAULTS=Dev` | The most any project may use. Read once, when the plugin loads, so set it _before_ loading. `OP_ENV_VAULTS` can only narrow it. Unset or empty means any vault.                                                                    |
+| `OP_ENV_DEBUG=1`            | Trace every pass, including the hook-driven ones.                                                                                                                                                                                  |
+| `OP_ENV_HOOK=direnv`        | Default. Resolve before the first command, then only when direnv loads, reloads or unloads an `.envrc` (`$DIRENV_DIFF` changes).                                                                                                   |
+| `OP_ENV_HOOK=always`        | Scan before every command, so references exported any other way (by hand, by another plugin) are resolved too.                                                                                                                     |
+| `OP_ENV_HOOK=off`           | Don't install the preexec hook; call `op-env-resolve` yourself. Set it _before_ loading.                                                                                                                                           |
+| `OP_ENV_NO_CACHE=1`         | Ask `op` every pass instead of caching values in memory.                                                                                                                                                                           |
+| `OP_ENV_VAULTS=Dev`         | Only resolve references into these vaults. Others are refused with a warning and never sent to `op`. Read on every pass, so a project can set it in its `.envrc`. Unset or empty means every vault `OP_ENV_ALLOWED_VAULTS` allows. |
 
 Both vault lists are comma-separated and matched exactly against the vault
 part of the reference (name or ID, case-sensitive). Spaces around entries are
-ignored.
+ignored. A value that names no vault, such as `,`, refuses every reference.
 
 ### Per-project vaults
 
@@ -317,10 +317,11 @@ values.
 By default the scan runs before the first command and then only when
 `$DIRENV_DIFF` changes, which direnv does whenever it loads, reloads or unloads
 an `.envrc`. Resolving a variable in place does not change `$DIRENV_DIFF`, so
-on a normal command the hook does a single string comparison. One extra check
-covers `cd .. && cd -` in a single command line, where direnv unloads and
-reloads and ends with the same diff: if a variable the plugin resolved holds
-its reference again, the scan runs anyway. With `OP_ENV_HOOK=always` the scan
+on a normal command the hook compares `$DIRENV_DIFF` and checks only the
+variables the plugin resolved, not the whole environment. That check covers
+`cd .. && cd -` in a single command line, where direnv unloads and reloads and
+ends with the same diff: if a variable the plugin resolved holds its reference
+again, the scan runs anyway. With `OP_ENV_HOOK=always` the scan
 runs before every command; it skips values the plugin set itself, so once
 everything is resolved no `op` call is made.
 
@@ -330,10 +331,11 @@ directories doesn't re-hit `op`.
 
 Anything the batch doesn't produce is retried one reference at a time with
 `op read`. That way a single bad reference can't take down the rest of the
-batch, and the error message can name the one that actually broke. If
-`op read` fails for any other reason (signed out, authorization prompt
-dismissed), the remaining references are skipped instead of prompting once
-each.
+batch, and the error message can name the one that actually broke. After the
+first failed `op read` the plugin runs `op whoami`. If that succeeds, the
+failure belongs to that reference and the rest are still read. If it fails
+(signed out, authorization prompt dismissed), the remaining references are
+skipped instead of prompting once each.
 
 ### References inside a value
 
@@ -346,9 +348,13 @@ export API_ADDR='{{ op://Dev/api/host }}:8443'
 export DATABASE_URL='postgres://{{ op://Dev/db/user }}:{{ op://Dev/db/password }}@db/app'
 ```
 
-`export B="$A:8080"` does not work: the shell expands `$A` while it still holds
-the reference, so `B` becomes `op://...:8080`, which names a different field.
-Write `export B="{{ $A }}:8080"` instead.
+In an `.envrc`, `export B="$A:8080"` does not work: the shell expands `$A`
+while it still holds the reference, so `B` becomes `op://...:8080`, which
+names a different field. Write `export B="{{ $A }}:8080"` instead. Only do
+this where `$A` still holds the reference: once `A` is resolved, as in your
+interactive shell, `{{ $A }}` wraps the secret itself, which is not a
+reference, so `B` keeps the literal braces. There, `export B="$A:8080"` is
+right.
 
 - Each tag's reference gets the same vault checks, batch and cache as a
   whole-value reference.
@@ -356,8 +362,9 @@ Write `export B="{{ $A }}:8080"` instead.
   value is never handed to `op inject` as a template, so `op`'s own variable
   expansion does not apply.
 - All or nothing: if any tag fails, the variable keeps its original value.
-- Tags don't nest. As with `op inject`, `{{ op://Dev/{{ op://Dev/a/x }}/f }}`
-  is refused; compose with shell variables instead.
+- Tags don't nest. As with `op inject`, a variable with any `{{` inside a
+  `{{ op://... }}` tag, such as `{{ op://Dev/{{ op://Dev/a/x }}/f }}`, is
+  refused; compose with shell variables instead.
 - Substituted secrets are not scanned again, so a secret whose value contains
   `{{ op://... }}` stays verbatim.
 
@@ -420,7 +427,10 @@ come back intact.
   and still resolve the `Private` secret.
 - A value the plugin set is never treated as a reference again, even if the
   secret itself contains `op://` text or `{{ }}` tags, so a secret cannot make
-  the plugin read another secret.
+  the plugin read another secret. The plugin remembers this only in the shell
+  that resolved it. A nested shell that loads the plugin treats an inherited
+  `op://` or `{{ op://... }}` value as a reference, so a secret that holds
+  such text is not supported.
 
 ## Compared with 1Password Environments
 

@@ -90,12 +90,80 @@ test_bad_ref_does_not_block_others() {
     assert_status 1
     assert_eq good $GOOD
     assert_eq op://Dev/missing/x $BAD
-    assert_calls 'inject op://Dev/missing/x op://Dev/a/x' 'read op://Dev/missing/x' 'read op://Dev/a/x'
+    assert_calls 'inject op://Dev/missing/x op://Dev/a/x' 'read op://Dev/missing/x' 'whoami' 'read op://Dev/a/x'
     local err=$(<$T/err)
     assert_contains $err 'could not resolve BAD (left unchanged)'
     assert_contains $err 'could not find item'
     assert_contains $err 'op inject: [ERROR]'
     assert_not_contains $err GOOD
+}
+
+test_per_ref_read_errors_do_not_stop_other_reads() {
+    export FAKE_OP_INJECT=fail A=op://Dev/a/x B=op://Dev/b/x
+    # op 2.39's wording for a reference that is wrong on its own.
+    local -a errors=(
+        '"x" isn'\''t an item. Specify the item with its UUID, name, or domain.'
+        '"f" isn'\''t a field in the "x" item'
+        '"V" isn'\''t a vault in this account. Specify the vault with its UUID or name.'
+        "invalid secret reference 'op://Dev/a': too few segments"
+        'More than one item matches "x". Try again and specify the item by its ID'
+        'could not find item x in vault Dev'
+        'could not find field or file f in section s on item x in vault Dev'
+        'no item matched the secret reference query'
+        "item 'Dev/x' does not have a field 'f'"
+        'item is not in an active state'
+    )
+    local e
+    for e in $errors; do
+        clear_calls
+        FAKE_OP_READ_ERROR=$e run op-env-resolve
+        assert_status 1
+        assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x' 'whoami' 'read op://Dev/b/x'
+    done
+}
+
+test_unrecognised_read_error_does_not_stop_other_reads_while_signed_in() {
+    export FAKE_OP_INJECT=fail FAKE_OP_READ_ERROR='permission denied for item x' \
+        A=op://Dev/a/x B=op://Dev/b/x
+    secret op://Dev/b/x two
+    run op-env-resolve
+    assert_status 1
+    assert_eq op://Dev/a/x $A
+    assert_eq two $B
+    assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x' 'whoami' 'read op://Dev/b/x'
+}
+
+test_unwritable_tmpdir_is_reported_once() {
+    secret op://Dev/a/x one
+    export TMPDIR=$T/missing A=op://Dev/a/x
+    run _op-env-resolve --if-changed
+    assert_status 1
+    assert_eq op://Dev/a/x $A
+    assert_calls
+    assert_contains "$(<$T/err)" 'could not resolve A'
+    assert_contains "$(<$T/err)" 'mktemp failed'
+    run _op-env-resolve --if-changed
+    assert_status 0
+    assert_eq '' "$(<$T/err)"
+}
+
+test_candidate_matches_what_the_resolver_parses() {
+    local v
+    for v in op://Dev/a/x '{{ op://Dev/a/x }}' '{{op://Dev/a/x}}' 'a:{{	op://Dev/a/x }}'; do
+        X=$v _op-env-candidate X || fail "expected ${(qqqq)v} to be a candidate"
+    done
+    for v in '' op:// '{{foo}}' '{{ $A }}:8080' 'op:/x'; do
+        X=$v _op-env-candidate X && fail "expected ${(qqqq)v} not to be a candidate"
+    done
+    return 0
+}
+
+test_session_read_error_stops_after_first_read() {
+    export FAKE_OP_INJECT=fail FAKE_OP_READ_ERROR='could not find session token for account x' FAKE_OP_WHOAMI=signed-out \
+        A=op://Dev/a/x B=op://Dev/b/x
+    run op-env-resolve
+    assert_status 1
+    assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x' 'whoami'
 }
 
 test_signed_out_stops_after_first_read() {
@@ -107,7 +175,7 @@ test_signed_out_stops_after_first_read() {
     assert_status 1
     assert_eq op://Dev/a/x $A
     assert_eq op://Dev/b/x $B
-    assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x'
+    assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x' 'whoami'
     local err=$(<$T/err)
     assert_contains $err 'could not resolve A, B'
     assert_contains $err 'skipped after op://Dev/a/x failed: [ERROR]'
@@ -141,7 +209,7 @@ test_unresolved_template_falls_back_to_read() {
     assert_status 1
     assert_eq one $A
     assert_eq op://Dev/missing/x $B
-    assert_calls 'inject op://Dev/a/x op://Dev/missing/x' 'read op://Dev/missing/x'
+    assert_calls 'inject op://Dev/a/x op://Dev/missing/x' 'read op://Dev/missing/x' 'whoami'
 }
 
 test_missing_op_binary() {
@@ -221,7 +289,7 @@ test_if_changed_skips_refs_that_already_failed() {
     export OP_ENV_HOOK=always A=op://Dev/missing/x
     run _op-env-preexec
     assert_status 0
-    assert_calls 'inject op://Dev/missing/x' 'read op://Dev/missing/x'
+    assert_calls 'inject op://Dev/missing/x' 'read op://Dev/missing/x' 'whoami'
     clear_calls
     run _op-env-preexec
     assert_calls
@@ -229,7 +297,7 @@ test_if_changed_skips_refs_that_already_failed() {
     export B=op://Dev/b/x
     run _op-env-preexec
     assert_eq two $B
-    assert_calls 'inject op://Dev/missing/x op://Dev/b/x' 'read op://Dev/missing/x' 'read op://Dev/b/x'
+    assert_calls 'inject op://Dev/missing/x op://Dev/b/x' 'read op://Dev/missing/x' 'whoami' 'read op://Dev/b/x'
 }
 
 test_forced_pass_retries_refs_that_already_failed() {
@@ -279,6 +347,24 @@ test_vault_allowlist_is_exact_and_case_sensitive() {
     assert_eq op://dev/a/x $A
     assert_eq op://Dev2/a/x $B
     assert_calls
+}
+
+test_vault_allowlist_naming_no_vault_refuses_every_ref() {
+    secret op://Dev/a/x dev
+    export OP_ENV_VAULTS=' , ' A=op://Dev/a/x
+    run op-env-resolve
+    assert_status 1
+    assert_eq op://Dev/a/x $A
+    assert_contains "$(<$T/err)" 'vault "Dev" is not in OP_ENV_VAULTS'
+    assert_calls
+}
+
+test_empty_vault_allowlist_means_any_vault() {
+    secret op://Dev/a/x dev
+    export OP_ENV_VAULTS= A=op://Dev/a/x
+    run op-env-resolve
+    assert_status 0
+    assert_eq dev $A
 }
 
 test_vault_allowlist_applies_to_cached_values() {
@@ -332,6 +418,24 @@ test_resolves_tags_inside_a_value() {
     assert_calls 'inject op://Dev/db/host op://Dev/db/user op://Dev/db/pass'
 }
 
+test_tag_wrapping_another_tag_is_refused() {
+    secret op://Dev/a/x one
+    local -a tmpls=(
+        'x={{ op://Dev/{{ x }}/f }}'
+        'x={{ op://Dev/a/x {{ }}'
+        '{{ op://Dev/a/x {{ op://Dev/a/x }}'
+    )
+    export A=$tmpls[1] B=$tmpls[2] C=$tmpls[3]
+    run op-env-resolve
+    assert_status 1
+    assert_eq $tmpls[1] $A
+    assert_eq $tmpls[2] $B
+    assert_eq $tmpls[3] $C
+    assert_calls
+    assert_contains "$(<$T/err)" 'could not resolve A, B, C'
+    assert_contains "$(<$T/err)" 'nested {{ }} tags are not supported'
+}
+
 test_text_outside_tags_is_kept_verbatim() {
     secret op://Dev/a/x one
     local tmpl='op://Private/b/c }} {{ op://Dev/a/x }} {{ not a ref }} {{op:// }} $HOME {{ op://Dev/a/x }}'
@@ -367,6 +471,16 @@ test_tags_resolve_all_or_nothing() {
     assert_contains "$(<$T/err)" 'op-env: could not resolve A'
     assert_contains "$(<$T/err)" '  A  op://Dev/missing/x'
     assert_not_contains "$(<$T/err)" '  A  op://Dev/a/x'
+}
+
+test_nested_tag_report_does_not_echo_the_value() {
+    export PW=hunter2pw N='plain=hunter2pw {{ op://Dev/{{ x }}/f }}'
+    run op-env-resolve
+    assert_status 1
+    assert_eq 'plain=hunter2pw {{ op://Dev/{{ x }}/f }}' $N
+    assert_contains "$(<$T/err)" '  N  '
+    assert_contains "$(<$T/err)" 'nested {{ }} tags are not supported'
+    assert_not_contains "$(<$T/err)" hunter2pw
 }
 
 test_nested_tags_fail_like_op_inject() {
@@ -441,6 +555,15 @@ test_allowed_vaults_apply_when_project_sets_none() {
     export A=op://Dev/a/x B=op://Staging/a/x
     local out=$(allowed_zsh Dev 'op-env-resolve 2>/dev/null; print -r -- "A=$A B=$B"')
     assert_eq 'A=dev B=op://Staging/a/x' $out
+}
+
+test_allowed_vaults_naming_no_vault_refuses_every_ref() {
+    secret op://Dev/a/x dev
+    export A=op://Dev/a/x
+    local out=$(allowed_zsh , 'op-env-resolve; print -r -- "st=$? A=$A"' 2>$T/err)
+    assert_eq 'st=1 A=op://Dev/a/x' $out
+    assert_contains "$(<$T/err)" 'vault "Dev" is not in OP_ENV_ALLOWED_VAULTS'
+    assert_calls
 }
 
 test_allowed_vaults_ignore_changes_after_load() {
@@ -543,6 +666,13 @@ test_resolve_cli_options() {
 # Commands come from stdin. No ZLE, or zsh reads from the terminal instead; no prompt, or it is drawn on the terminal.
 interactive_zsh() {
     PS1= zsh -fi +Z +o prompt_cr +o prompt_sp 2>/dev/null
+}
+
+test_ctrl_c_removes_temp_file() {
+    mkdir $T/tmp
+    export TMPDIR=$T/tmp FAKE_OP_INJECT=sigint A=op://Dev/a/x
+    print -r -- "source ${(qq)ROOT}/op-env.plugin.zsh; FAKE_OP_SHELL=\$\$ op-env-resolve" | interactive_zsh
+    assert_eq '' "$(print -r -- $T/tmp/*(DN))" 'temp files'
 }
 
 test_hook_only_in_interactive_shells() {
