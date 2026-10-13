@@ -19,19 +19,6 @@ typeset -gA _OP_ENV_WARNED
 typeset -g  _OP_ENV_LAST_SIG=''
 # name -> value the plugin set, so the hook can spot a ref direnv set back, and a secret holding op:// text is never resolved again.
 typeset -gA _OP_ENV_RESOLVED
-# A nested shell inherits resolved secrets but not this record; the parent exports NAME:LENGTH for each.
-() {
-    emulate -L zsh -o extended_glob
-    setopt local_options no_xtrace no_verbose
-    local _oe_entry _oe_name
-    for _oe_entry in ${(s: :)${_OP_ENV_RESOLVED_VARS:-}}; do
-        _oe_name=${_oe_entry%:*}
-        # Checked before (P), which would evaluate a subscript in an inherited name.
-        [[ $_oe_name == [A-Za-z_][A-Za-z0-9_]# && ${_oe_entry##*:} == <-> ]] || continue
-        (( ${+parameters[$_oe_name]} )) && (( ${#${(P)_oe_name}} == ${_oe_entry##*:} )) &&
-            _OP_ENV_RESOLVED[$_oe_name]=${(P)_oe_name}
-    done
-}
 # _OP_ENV_LAST_DIFF: $DIRENV_DIFF the hook last ran for. Left unset so the first command always gets a pass.
 typeset -g OP_ENV_DEBUG="${OP_ENV_DEBUG:-}"
 

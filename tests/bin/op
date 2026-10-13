@@ -1,6 +1,7 @@
 #!/usr/bin/env -S zsh -f
 # Fake `op` for tests. Secrets come from $FAKE_OP_DIR/secrets.zsh; each call is appended to $FAKE_OP_DIR/calls.
 # FAKE_OP_INJECT=fail|signed-out|interrupt|sigint|passthrough and FAKE_OP_READ=signed-out|interrupt simulate failures.
+# FAKE_OP_WHOAMI=signed-out makes whoami fail; signed-out inject/read imply it.
 # FAKE_OP_READ_ERROR replaces the reason op read gives for a missing secret.
 emulate zsh -o extended_glob
 typeset -A secrets
@@ -56,6 +57,11 @@ case $1 in
             exit 1
         fi
         print -rn -- $secrets[$ref]
+        ;;
+    whoami)
+        print -r -- whoami >>$FAKE_OP_DIR/calls
+        [[ ${FAKE_OP_WHOAMI:-} == signed-out || ${FAKE_OP_READ:-} == signed-out || ${FAKE_OP_INJECT:-} == signed-out ]] && signed_out
+        print -r -- 'URL: https://example.1password.com'
         ;;
     *)
         print -ru2 -- "fake op: unsupported command: $*"

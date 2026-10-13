@@ -9,10 +9,10 @@ setopt local_options no_xtrace no_verbose
 # Prefixed so a local cannot shadow an exported variable of the same name.
 local _oe_name _oe_ref _oe_value _oe_line _oe_sig _oe_abort _oe_tmp _oe_out _oe_err _oe_injecterr _oe_vault
 local _oe_rest _oe_head _oe_lit
-local -i _oe_st _oe_idx _oe_nested
+local -i _oe_st _oe_idx _oe_nested _oe_signed=0
 # _oe_partsof: name -> NUL-joined (text ref text ref ... text). A whole-value ref is ('' ref '').
-local -A _oe_valof _oe_partsof _oe_got _oe_why
-local -a _oe_failed _oe_shout _oe_acc _oe_lines _oe_vaults _oe_parts _oe_set
+local -A _oe_valof _oe_partsof _oe_got _oe_why _oe_show
+local -a _oe_failed _oe_shout _oe_acc _oe_lines _oe_vaults _oe_parts
 local -aU _oe_cand _oe_refs
 
 for _oe_name in ${(k)parameters[(R)scalar*export*]}; do
@@ -44,6 +44,8 @@ for _oe_name in ${(k)parameters[(R)scalar*export*]}; do
     if (( _oe_nested )); then
         _oe_parts=('' "$_oe_value" '')
         _oe_why[$_oe_value]='nested {{ }} tags are not supported (op inject rejects them too)'
+        # The value can hold a secret, so the report names the variable only.
+        _oe_show[$_oe_value]='(value not shown)'
     elif (( $#_oe_parts )); then
         _oe_parts+=("$_oe_lit$_oe_rest")
     elif [[ $_oe_value == op://?* ]]; then
@@ -95,7 +97,7 @@ fi
 
 if (( $#_oe_refs )); then
     if (( $+commands[op] )); then
-        _oe_tmp=$(mktemp "${TMPDIR:-/tmp}/op-env.XXXXXX") || return 1
+        _oe_tmp=$(mktemp "${TMPDIR:-/tmp}/op-env.XXXXXX") || _oe_abort="cannot create a temp file in ${TMPDIR:-/tmp} (mktemp failed)"
     else
         _oe_abort='`op` not found in PATH'
     fi
@@ -165,9 +167,15 @@ if (( $#_oe_refs )); then
             _oe_err=$(<$_oe_tmp)
             _oe_why[$_oe_ref]=${_oe_err:-$_oe_why[$_oe_ref]}
             _op-env-dbg "  $_oe_ref FAILED: $_oe_why[$_oe_ref]"
-            # op 2.39's per-ref errors. Anything else (signed out, prompt dismissed) would repeat, and re-prompt, for every ref.
-            if (( _oe_st > 128 )) || [[ $_oe_err != (#i)*(isn?t a|invalid secret reference|more than one|could not find (item|field)|no item matched|does not have a field|not in an active state)* ]]; then
+            # A bad ref leaves op signed in. Any other failure (signed out, prompt dismissed) would repeat, and re-prompt, for every ref.
+            if (( _oe_st > 128 )); then
                 _oe_abort="skipped after $_oe_ref failed: ${_oe_why[$_oe_ref]%%$'\n'*}"
+            elif (( ! _oe_signed )); then
+                if op whoami </dev/null >/dev/null 2>&1; then
+                    _oe_signed=1
+                else
+                    _oe_abort="skipped after $_oe_ref failed: ${_oe_why[$_oe_ref]%%$'\n'*}"
+                fi
             fi
         done
     } always {
@@ -191,15 +199,6 @@ for _oe_name in ${(ko)_oe_partsof}; do
     typeset -gx "$_oe_name=$_oe_value"
     _OP_ENV_RESOLVED[$_oe_name]=$_oe_value
 done
-# Names and lengths, never values: enough for a nested shell to tell an inherited secret from a ref.
-for _oe_name in ${(ok)_OP_ENV_RESOLVED}; do
-    [[ ${(P)_oe_name-} == "$_OP_ENV_RESOLVED[$_oe_name]" ]] && _oe_set+=("$_oe_name:${#_OP_ENV_RESOLVED[$_oe_name]}")
-done
-if (( $#_oe_set )); then
-    typeset -gx _OP_ENV_RESOLVED_VARS="$_oe_set"
-else
-    unset _OP_ENV_RESOLVED_VARS
-fi
 for _oe_ref in ${(k)_oe_got}; do
     [[ -n ${OP_ENV_NO_CACHE:-} ]] || _OP_ENV_CACHE[$_oe_ref]=$_oe_got[$_oe_ref]
     unset "_OP_ENV_WARNED[$_oe_ref]"
@@ -230,7 +229,7 @@ if (( $#_oe_shout )); then
             _oe_ref=$_oe_parts[_oe_idx]
             (( $+_oe_got[$_oe_ref] )) && continue
             _OP_ENV_WARNED[$_oe_ref]=1
-            print -ru2 -- "  $_oe_name  $_oe_ref"
+            print -ru2 -- "  $_oe_name  ${_oe_show[$_oe_ref]:-$_oe_ref}"
             print -ru2 -- "      ${${_oe_why[$_oe_ref]:-unknown}//$'\n'/ }"
         done
     done

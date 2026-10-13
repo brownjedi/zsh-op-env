@@ -90,7 +90,7 @@ test_bad_ref_does_not_block_others() {
     assert_status 1
     assert_eq good $GOOD
     assert_eq op://Dev/missing/x $BAD
-    assert_calls 'inject op://Dev/missing/x op://Dev/a/x' 'read op://Dev/missing/x' 'read op://Dev/a/x'
+    assert_calls 'inject op://Dev/missing/x op://Dev/a/x' 'read op://Dev/missing/x' 'whoami' 'read op://Dev/a/x'
     local err=$(<$T/err)
     assert_contains $err 'could not resolve BAD (left unchanged)'
     assert_contains $err 'could not find item'
@@ -118,16 +118,52 @@ test_per_ref_read_errors_do_not_stop_other_reads() {
         clear_calls
         FAKE_OP_READ_ERROR=$e run op-env-resolve
         assert_status 1
-        assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x' 'read op://Dev/b/x'
+        assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x' 'whoami' 'read op://Dev/b/x'
     done
 }
 
+test_unrecognised_read_error_does_not_stop_other_reads_while_signed_in() {
+    export FAKE_OP_INJECT=fail FAKE_OP_READ_ERROR='permission denied for item x' \
+        A=op://Dev/a/x B=op://Dev/b/x
+    secret op://Dev/b/x two
+    run op-env-resolve
+    assert_status 1
+    assert_eq op://Dev/a/x $A
+    assert_eq two $B
+    assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x' 'whoami' 'read op://Dev/b/x'
+}
+
+test_unwritable_tmpdir_is_reported_once() {
+    secret op://Dev/a/x one
+    export TMPDIR=$T/missing A=op://Dev/a/x
+    run _op-env-resolve --if-changed
+    assert_status 1
+    assert_eq op://Dev/a/x $A
+    assert_calls
+    assert_contains "$(<$T/err)" 'could not resolve A'
+    assert_contains "$(<$T/err)" 'mktemp failed'
+    run _op-env-resolve --if-changed
+    assert_status 0
+    assert_eq '' "$(<$T/err)"
+}
+
+test_candidate_matches_what_the_resolver_parses() {
+    local v
+    for v in op://Dev/a/x '{{ op://Dev/a/x }}' '{{op://Dev/a/x}}' 'a:{{	op://Dev/a/x }}'; do
+        X=$v _op-env-candidate X || fail "expected ${(qqqq)v} to be a candidate"
+    done
+    for v in '' op:// '{{foo}}' '{{ $A }}:8080' 'op:/x'; do
+        X=$v _op-env-candidate X && fail "expected ${(qqqq)v} not to be a candidate"
+    done
+    return 0
+}
+
 test_session_read_error_stops_after_first_read() {
-    export FAKE_OP_INJECT=fail FAKE_OP_READ_ERROR='could not find session token for account x' \
+    export FAKE_OP_INJECT=fail FAKE_OP_READ_ERROR='could not find session token for account x' FAKE_OP_WHOAMI=signed-out \
         A=op://Dev/a/x B=op://Dev/b/x
     run op-env-resolve
     assert_status 1
-    assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x'
+    assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x' 'whoami'
 }
 
 test_signed_out_stops_after_first_read() {
@@ -139,7 +175,7 @@ test_signed_out_stops_after_first_read() {
     assert_status 1
     assert_eq op://Dev/a/x $A
     assert_eq op://Dev/b/x $B
-    assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x'
+    assert_calls 'inject op://Dev/a/x op://Dev/b/x' 'read op://Dev/a/x' 'whoami'
     local err=$(<$T/err)
     assert_contains $err 'could not resolve A, B'
     assert_contains $err 'skipped after op://Dev/a/x failed: [ERROR]'
@@ -173,7 +209,7 @@ test_unresolved_template_falls_back_to_read() {
     assert_status 1
     assert_eq one $A
     assert_eq op://Dev/missing/x $B
-    assert_calls 'inject op://Dev/a/x op://Dev/missing/x' 'read op://Dev/missing/x'
+    assert_calls 'inject op://Dev/a/x op://Dev/missing/x' 'read op://Dev/missing/x' 'whoami'
 }
 
 test_missing_op_binary() {
@@ -253,7 +289,7 @@ test_if_changed_skips_refs_that_already_failed() {
     export OP_ENV_HOOK=always A=op://Dev/missing/x
     run _op-env-preexec
     assert_status 0
-    assert_calls 'inject op://Dev/missing/x' 'read op://Dev/missing/x'
+    assert_calls 'inject op://Dev/missing/x' 'read op://Dev/missing/x' 'whoami'
     clear_calls
     run _op-env-preexec
     assert_calls
@@ -261,7 +297,7 @@ test_if_changed_skips_refs_that_already_failed() {
     export B=op://Dev/b/x
     run _op-env-preexec
     assert_eq two $B
-    assert_calls 'inject op://Dev/missing/x op://Dev/b/x' 'read op://Dev/missing/x' 'read op://Dev/b/x'
+    assert_calls 'inject op://Dev/missing/x op://Dev/b/x' 'read op://Dev/missing/x' 'whoami' 'read op://Dev/b/x'
 }
 
 test_forced_pass_retries_refs_that_already_failed() {
@@ -437,6 +473,16 @@ test_tags_resolve_all_or_nothing() {
     assert_not_contains "$(<$T/err)" '  A  op://Dev/a/x'
 }
 
+test_nested_tag_report_does_not_echo_the_value() {
+    export PW=hunter2pw N='plain=hunter2pw {{ op://Dev/{{ x }}/f }}'
+    run op-env-resolve
+    assert_status 1
+    assert_eq 'plain=hunter2pw {{ op://Dev/{{ x }}/f }}' $N
+    assert_contains "$(<$T/err)" '  N  '
+    assert_contains "$(<$T/err)" 'nested {{ }} tags are not supported'
+    assert_not_contains "$(<$T/err)" hunter2pw
+}
+
 test_nested_tags_fail_like_op_inject() {
     secret op://Dev/name/x item
     secret op://Dev/item/f deep
@@ -475,50 +521,6 @@ test_resolved_secret_holding_refs_is_not_resolved_again() {
     assert_eq '{{ op://Dev/c/x }}' $A
     assert_eq op://Dev/c/x $B
     assert_calls 'inject op://Dev/a/x op://Dev/b/x'
-}
-
-nested_zsh() {
-    zsh -f -c "source ${(qq)ROOT}/op-env.plugin.zsh; $1"
-}
-
-test_nested_shell_does_not_resolve_inherited_secrets() {
-    secret op://Dev/a/x 'tok-{{ op://Dev/c/x }}'
-    secret op://Dev/b/x op://Dev/c/x
-    secret op://Dev/c/x other-secret
-    export A=op://Dev/a/x B=op://Dev/b/x
-    run op-env-resolve
-    clear_calls
-    assert_eq 'st=0 A=tok-{{ op://Dev/c/x }} B=op://Dev/c/x' \
-        "$(nested_zsh 'op-env-resolve; print -r -- "st=$? A=$A B=$B"')"
-    assert_calls
-}
-
-test_nested_shell_resolves_refs_exported_after_the_last_pass() {
-    secret op://Dev/a/x one
-    secret op://Dev/b/x two
-    export A=op://Dev/a/x
-    run op-env-resolve
-    # Typed on the same line as `zsh`, so no pass ran in between.
-    export A=op://Dev/b/x
-    assert_eq A=two "$(nested_zsh 'op-env-resolve; print -r -- "A=$A"')"
-}
-
-test_nested_shell_resolves_refs_the_parent_could_not() {
-    secret op://Dev/a/x one
-    export A=op://Dev/a/x
-    run op-env-resolve
-    export A=op://Dev/b/x
-    run op-env-resolve
-    assert_status 1
-    secret op://Dev/b/x two
-    assert_eq A=two "$(nested_zsh 'op-env-resolve; print -r -- "A=$A"')"
-}
-
-test_nested_shell_ignores_unsafe_inherited_names() {
-    secret op://Dev/a/x one
-    export A=op://Dev/a/x _OP_ENV_RESOLVED_VARS="A:13 B[\$(touch $T/pwned)]:1"
-    assert_eq A=one "$(nested_zsh 'op-env-resolve; print -r -- "A=$A"')"
-    [[ ! -e $T/pwned ]] || fail 'inherited name was evaluated'
 }
 
 test_direnv_hook_catches_template_reload_within_one_command() {

@@ -331,10 +331,11 @@ directories doesn't re-hit `op`.
 
 Anything the batch doesn't produce is retried one reference at a time with
 `op read`. That way a single bad reference can't take down the rest of the
-batch, and the error message can name the one that actually broke. If
-`op read` fails for any other reason (signed out, authorization prompt
-dismissed), the remaining references are skipped instead of prompting once
-each.
+batch, and the error message can name the one that actually broke. After the
+first failed `op read` the plugin runs `op whoami`. If that succeeds, the
+failure belongs to that reference and the rest are still read. If it fails
+(signed out, authorization prompt dismissed), the remaining references are
+skipped instead of prompting once each.
 
 ### References inside a value
 
@@ -426,10 +427,10 @@ come back intact.
   and still resolve the `Private` secret.
 - A value the plugin set is never treated as a reference again, even if the
   secret itself contains `op://` text or `{{ }}` tags, so a secret cannot make
-  the plugin read another secret. This holds in nested shells too: the plugin
-  exports `_OP_ENV_RESOLVED_VARS`, the names and lengths (never the values) of
-  the variables it set, and a nested shell that loads the plugin skips
-  inherited values that still match.
+  the plugin read another secret. The plugin remembers this only in the shell
+  that resolved it. A nested shell that loads the plugin treats an inherited
+  `op://` or `{{ op://... }}` value as a reference, so a secret that holds
+  such text is not supported.
 
 ## Compared with 1Password Environments
 
